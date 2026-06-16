@@ -1,0 +1,10 @@
+# Ignore build artifacts — these are large and contain no source to index
+/target/
+**/*.o
+**/*.ll
+
+# Git internals
+.git/
+
+# Lock file — authoritative but noisy for architecture questions
+Cargo.lock

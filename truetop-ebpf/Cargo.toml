@@ -1,0 +1,17 @@
+[package]
+name = "truetop-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+truetop-common = { path = "../truetop-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "truetop"
+path = "src/main.rs"
