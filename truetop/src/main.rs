@@ -1,8 +1,10 @@
 //! truetop — user-space entrypoint.
 //!
-//! Phase 1 skeleton (`CLAUDE.md` §3/§5): wires the double-buffer dual-thread
-//! model with **mock** data. No eBPF loading or kernel hooks yet — those slot
-//! in behind `backend::collector_loop` without changing this wiring or the UI.
+//! This commit lands the **CO-RE foundation**: the eBPF program reads
+//! `task_struct::pid` through an offset resolved at runtime against the live
+//! kernel BTF and injected via a global (`btf`/`PID_OFFSET`), so one binary
+//! works across kernel versions/arches. The data pipeline (per-CPU
+//! accounting + delta math) still runs on **mock** data in `backend`.
 //!
 //! Topology:
 //!   - one shared `ArcSwap<SystemState>` (the double buffer),
@@ -11,14 +13,20 @@
 //!   - a SIGINT/SIGTERM listener flips a shared flag for graceful teardown.
 
 mod backend;
+mod btf;
 mod ui;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
+use anyhow::Context as _;
 use arc_swap::ArcSwap;
+use aya::{EbpfLoader, maps::Array, programs::RawTracePoint};
 use backend::SystemState;
 use tokio::signal;
 
@@ -26,7 +34,7 @@ use tokio::signal;
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    // Bump the memlock rlimit before any BPF map allocation (CLAUDE.md §4).
+    // Bump the memlock rlimit before any BPF map allocation.
     // Harmless to set now; required once the loader is wired in. Older kernels
     // without memcg-based accounting need this, see https://lwn.net/Articles/837122/.
     let rlim = libc::rlimit {
@@ -38,14 +46,45 @@ async fn main() -> anyhow::Result<()> {
         log::debug!("remove limit on locked memory failed, ret is: {ret}");
     }
 
-    // The double buffer. Seeded with an empty snapshot so the renderer always
-    // has something consistent to load before the collector's first tick.
+    // --- CO-RE: resolve task_struct::pid against the running kernel's BTF and
+    // inject it into the program before load. The same bytecode then reads the
+    // field correctly on any kernel/arch.
+    let pid_offset = btf::field_byte_offset("task_struct", "pid")
+        .context("resolving task_struct::pid offset from kernel BTF")?;
+    log::info!("CO-RE: task_struct::pid at byte offset {pid_offset} on this kernel");
+
+    let mut ebpf = EbpfLoader::new()
+        .override_global("PID_OFFSET", &pid_offset, true)
+        .load(aya::include_bytes_aligned!(concat!(
+            env!("OUT_DIR"),
+            "/truetop"
+        )))
+        .context("loading eBPF object")?;
+
+    let program: &mut RawTracePoint = ebpf
+        .program_mut("sched_switch")
+        .context("sched_switch program not found in object")?
+        .try_into()?;
+    program.load().context("loading sched_switch program")?;
+    program
+        .attach("sched_switch")
+        .context("attaching sched_switch raw tracepoint")?;
+
+    // Prove the injected offset reads real pids at runtime.
+    {
+        let last_pid: Array<_, u32> =
+            Array::try_from(ebpf.map("LAST_PID").context("LAST_PID map not found")?)?;
+        std::thread::sleep(Duration::from_millis(200));
+        match last_pid.get(&0, 0) {
+            Ok(pid) => log::info!("CO-RE smoke test: sample scheduled-in pid = {pid}"),
+            Err(e) => log::warn!("CO-RE smoke test: could not read LAST_PID: {e}"),
+        }
+    }
+
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
 
-    // Shared run flag: cleared by the UI on 'q' or by the signal listener.
     let running = Arc::new(AtomicBool::new(true));
 
-    // Backend collector — independent cadence, never blocks the renderer.
     let collector = tokio::spawn(backend::collector_loop(Arc::clone(&shared)));
 
     // Graceful teardown: translate SIGINT/SIGTERM into a run-flag clear so the
@@ -56,11 +95,8 @@ async fn main() -> anyhow::Result<()> {
         signal_running.store(false, Ordering::Relaxed);
     });
 
-    // Renderer owns the main thread. crossterm's polled event loop blocks here;
-    // the Tokio tasks above run on other runtime workers (rt-multi-thread).
     let render_result = ui::render_app(Arc::clone(&shared), Arc::clone(&running));
 
-    // UI has exited (q or signal). Ensure peers stop and the flag is settled.
     running.store(false, Ordering::Relaxed);
     collector.abort();
     signal_task.abort();
