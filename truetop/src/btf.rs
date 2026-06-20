@@ -49,7 +49,13 @@ impl Btf {
             _ if u16::from_be_bytes([data[0], data[1]]) == 0xeb9f => false,
             _ => bail!("bad BTF magic in {VMLINUX_BTF}"),
         };
-        let mut btf = Self { data, le, type_off: 0, type_len: 0, str_off: 0 };
+        let mut btf = Self {
+            data,
+            le,
+            type_off: 0,
+            type_len: 0,
+            str_off: 0,
+        };
         // btf_header: section offsets are relative to hdr_len.
         let hdr_len = btf.u32(4) as usize;
         btf.type_off = hdr_len + btf.u32(8) as usize;
@@ -59,8 +65,17 @@ impl Btf {
     }
 
     fn u32(&self, at: usize) -> u32 {
-        let b = [self.data[at], self.data[at + 1], self.data[at + 2], self.data[at + 3]];
-        if self.le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+        let b = [
+            self.data[at],
+            self.data[at + 1],
+            self.data[at + 2],
+            self.data[at + 3],
+        ];
+        if self.le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        }
     }
 
     fn string(&self, name_off: u32) -> &str {

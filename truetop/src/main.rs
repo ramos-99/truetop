@@ -1,10 +1,9 @@
 //! truetop — user-space entrypoint.
 //!
-//! This commit lands the **CO-RE foundation**: the eBPF program reads
-//! `task_struct::pid` through an offset resolved at runtime against the live
-//! kernel BTF and injected via a global (`btf`/`PID_OFFSET`), so one binary
-//! works across kernel versions/arches. The data pipeline (per-CPU
-//! accounting + delta math) still runs on **mock** data in `backend`.
+//! The eBPF program reads `task_struct::pid` through an offset resolved at
+//! runtime against the live kernel BTF and injected via a global
+//! (`btf`/`PID_OFFSET`), so one binary works across kernel versions/arches. It
+//! accumulates per-CPU on-CPU nanoseconds; `backend` derives utilisation.
 //!
 //! Topology:
 //!   - one shared `ArcSwap<SystemState>` (the double buffer),
@@ -14,29 +13,26 @@
 
 mod backend;
 mod btf;
+mod metrics;
 mod ui;
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::Context as _;
 use arc_swap::ArcSwap;
-use aya::{EbpfLoader, maps::Array, programs::RawTracePoint};
-use backend::SystemState;
+use aya::{EbpfLoader, maps::PerCpuHashMap, programs::RawTracePoint, util::nr_cpus};
+use backend::{Collector, SystemState};
 use tokio::signal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
 
-    // Bump the memlock rlimit before any BPF map allocation.
-    // Harmless to set now; required once the loader is wired in. Older kernels
-    // without memcg-based accounting need this, see https://lwn.net/Articles/837122/.
+    // Raise the memlock rlimit before the loader allocates any BPF map; kernels
+    // without memcg-based accounting need it, see https://lwn.net/Articles/837122/.
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
         rlim_max: libc::RLIM_INFINITY,
@@ -61,31 +57,21 @@ async fn main() -> anyhow::Result<()> {
         )))
         .context("loading eBPF object")?;
 
-    let program: &mut RawTracePoint = ebpf
-        .program_mut("sched_switch")
-        .context("sched_switch program not found in object")?
-        .try_into()?;
-    program.load().context("loading sched_switch program")?;
-    program
-        .attach("sched_switch")
-        .context("attaching sched_switch raw tracepoint")?;
+    attach_raw_tracepoint(&mut ebpf, "sched_switch")?;
+    attach_raw_tracepoint(&mut ebpf, "sched_process_exit")?;
 
-    // Prove the injected offset reads real pids at runtime.
-    {
-        let last_pid: Array<_, u32> =
-            Array::try_from(ebpf.map("LAST_PID").context("LAST_PID map not found")?)?;
-        std::thread::sleep(Duration::from_millis(200));
-        match last_pid.get(&0, 0) {
-            Ok(pid) => log::info!("CO-RE smoke test: sample scheduled-in pid = {pid}"),
-            Err(e) => log::warn!("CO-RE smoke test: could not read LAST_PID: {e}"),
-        }
-    }
+    let cpu_ns: PerCpuHashMap<_, u32, u64> =
+        PerCpuHashMap::try_from(ebpf.take_map("CPU_NS").context("CPU_NS map not found")?)?;
+    let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
 
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
 
     let running = Arc::new(AtomicBool::new(true));
 
-    let collector = tokio::spawn(backend::collector_loop(Arc::clone(&shared)));
+    let collector = tokio::spawn(backend::collector_loop(
+        Arc::clone(&shared),
+        Collector::new(cpu_ns, ncpus),
+    ));
 
     // Graceful teardown: translate SIGINT/SIGTERM into a run-flag clear so the
     // render loop unwinds, restores the terminal, and lets us detach cleanly.
@@ -101,7 +87,24 @@ async fn main() -> anyhow::Result<()> {
     collector.abort();
     signal_task.abort();
 
+    // `ebpf` owns the tracepoint links; dropping it here detaches them.
+    drop(ebpf);
     render_result.map_err(Into::into)
+}
+
+/// Load and attach the raw tracepoint whose program and tracepoint share `name`.
+fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Result<()> {
+    let program: &mut RawTracePoint = ebpf
+        .program_mut(name)
+        .with_context(|| format!("program `{name}` not found in object"))?
+        .try_into()?;
+    program
+        .load()
+        .with_context(|| format!("loading `{name}`"))?;
+    program
+        .attach(name)
+        .with_context(|| format!("attaching `{name}`"))?;
+    Ok(())
 }
 
 /// Resolve when the process receives SIGINT or (on Unix) SIGTERM.
