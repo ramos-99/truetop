@@ -69,11 +69,15 @@ fn event_loop(
 }
 
 fn draw(frame: &mut Frame, state: &SystemState) {
-    let header = Row::new([Cell::from("PID"), Cell::from("CPU%")])
+    let header = Row::new([Cell::from("PID"), Cell::from("CPU%"), Cell::from("COMMAND")])
         .style(Style::new().add_modifier(Modifier::BOLD | Modifier::REVERSED));
 
     let rows = state.processes.iter().map(process_row);
-    let widths = [Constraint::Length(8), Constraint::Length(8)];
+    let widths = [
+        Constraint::Length(8),
+        Constraint::Length(8),
+        Constraint::Fill(1),
+    ];
 
     let title = Line::from(format!(
         " truetop — tick {} · {} procs · q to quit ",
@@ -96,5 +100,6 @@ fn process_row(p: &ProcessMetrics) -> Row<'static> {
     Row::new([
         Cell::from(p.pid.to_string()),
         Cell::from(format!("{:>5.1}", p.cpu.cpu_percent)),
+        Cell::from(p.name.clone()),
     ])
 }

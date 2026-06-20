@@ -23,9 +23,15 @@ use std::sync::{
 
 use anyhow::Context as _;
 use arc_swap::ArcSwap;
-use aya::{EbpfLoader, maps::PerCpuHashMap, programs::RawTracePoint, util::nr_cpus};
+use aya::{
+    EbpfLoader,
+    maps::{HashMap, PerCpuHashMap},
+    programs::RawTracePoint,
+    util::nr_cpus,
+};
 use backend::{Collector, SystemState};
 use tokio::signal;
+use truetop_common::COMM_LEN;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,26 +48,16 @@ async fn main() -> anyhow::Result<()> {
         log::debug!("remove limit on locked memory failed, ret is: {ret}");
     }
 
-    // --- CO-RE: resolve task_struct::pid against the running kernel's BTF and
-    // inject it into the program before load. The same bytecode then reads the
-    // field correctly on any kernel/arch.
-    let pid_offset = btf::field_byte_offset("task_struct", "pid")
-        .context("resolving task_struct::pid offset from kernel BTF")?;
-    log::info!("CO-RE: task_struct::pid at byte offset {pid_offset} on this kernel");
-
-    let mut ebpf = EbpfLoader::new()
-        .override_global("PID_OFFSET", &pid_offset, true)
-        .load(aya::include_bytes_aligned!(concat!(
-            env!("OUT_DIR"),
-            "/truetop"
-        )))
-        .context("loading eBPF object")?;
+    let mut ebpf = load_ebpf()?;
 
     attach_raw_tracepoint(&mut ebpf, "sched_switch")?;
+    attach_raw_tracepoint(&mut ebpf, "sched_process_exec")?;
     attach_raw_tracepoint(&mut ebpf, "sched_process_exit")?;
 
     let cpu_ns: PerCpuHashMap<_, u32, u64> =
         PerCpuHashMap::try_from(ebpf.take_map("CPU_NS").context("CPU_NS map not found")?)?;
+    let comm: HashMap<_, u32, [u8; COMM_LEN]> =
+        HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
     let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
 
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
@@ -70,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
 
     let collector = tokio::spawn(backend::collector_loop(
         Arc::clone(&shared),
-        Collector::new(cpu_ns, ncpus),
+        Collector::new(cpu_ns, comm, ncpus),
     ));
 
     // Graceful teardown: translate SIGINT/SIGTERM into a run-flag clear so the
@@ -90,6 +86,23 @@ async fn main() -> anyhow::Result<()> {
     // `ebpf` owns the tracepoint links; dropping it here detaches them.
     drop(ebpf);
     render_result.map_err(Into::into)
+}
+
+/// Load the eBPF object, resolving task_struct field offsets from the live
+/// kernel BTF and injecting them as globals — our portable CO-RE (see `btf`).
+fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
+    let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
+    let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
+    log::info!("CO-RE offsets — pid: {pid}, tgid: {tgid}");
+
+    EbpfLoader::new()
+        .override_global("PID_OFFSET", &pid, true)
+        .override_global("TGID_OFFSET", &tgid, true)
+        .load(aya::include_bytes_aligned!(concat!(
+            env!("OUT_DIR"),
+            "/truetop"
+        )))
+        .context("loading eBPF object")
 }
 
 /// Load and attach the raw tracepoint whose program and tracepoint share `name`.

@@ -26,6 +26,7 @@ pub struct IoMetrics {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProcessMetrics {
     pub pid: u32,
+    pub name: String,
     pub cpu: CpuMetrics,
     pub mem: Option<MemMetrics>,
     pub io: Option<IoMetrics>,
