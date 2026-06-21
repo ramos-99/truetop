@@ -1,10 +1,12 @@
 //! Collector (backend) — producer side of the double-buffer (CLAUDE.md §3).
-//! Pulls the eBPF per-CPU counters at 1 Hz, derives per-interval CPU%, resolves
-//! names, and publishes an immutable snapshot via an atomic pointer swap.
+//! Pulls the eBPF CPU counters at 1 Hz, derives per-interval CPU%, resolves
+//! names and RSS, and publishes an immutable snapshot via an atomic pointer swap.
 //!
 //! Names use the event-driven identity model: the kernel captures `comm` on
-//! `exec` into `COMM_MAP`; the local cache is seeded once from `/proc` and
-//! filled from `COMM_MAP` on a miss, never re-parsing `/proc`.
+//! `exec` into `COMM_MAP`; a one-time `/proc` snapshot seeds processes that
+//! predate truetop. RSS is read from `/proc/<pid>/statm` for the visible rows
+//! only — since Linux 6.2 the exact value cannot be summed from eBPF cheaply
+//! (see README), so we read the same source `top` does, at negligible cost.
 
 use std::{
     collections::HashMap,
@@ -17,7 +19,7 @@ use aya::maps::{HashMap as BpfHashMap, MapData, PerCpuHashMap};
 use tokio::time::{MissedTickBehavior, interval};
 use truetop_common::COMM_LEN;
 
-use crate::metrics::{CpuMetrics, ProcessMetrics};
+use crate::metrics::{CpuMetrics, MemMetrics, ProcessMetrics};
 
 const MAX_ROWS: usize = 256;
 const UNKNOWN: &str = "<unknown>";
@@ -28,14 +30,15 @@ pub struct SystemState {
     pub processes: Vec<ProcessMetrics>,
 }
 
-/// Owns the persistent collection state; each [`Collector::tick`] reads the
-/// counters and produces the next snapshot.
+/// Owns the persistent collection state; each [`Collector::tick`] reads the maps
+/// and produces the next snapshot.
 pub struct Collector {
     cpu_ns: PerCpuHashMap<MapData, u32, u64>,
     comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
     ncpus: f64,
+    page_size: u64,
     prev: Totals,
-    names: HashMap<u32, String>,
+    name_seed: HashMap<u32, String>,
     tick: u64,
 }
 
@@ -49,8 +52,9 @@ impl Collector {
             cpu_ns,
             comm,
             ncpus: ncpus.max(1) as f64,
+            page_size: page_size(),
             prev: Totals::default(),
-            names: backfill_proc_names(),
+            name_seed: backfill_proc_names(),
             tick: 0,
         }
     }
@@ -59,9 +63,11 @@ impl Collector {
         self.tick = self.tick.wrapping_add(1);
 
         let current = Totals::read(&self.cpu_ns);
+        // Sorted and capped to the viewport; only these rows are enriched.
         let mut processes = current.utilisation_since(&self.prev, self.ncpus);
         for p in &mut processes {
             p.name = self.name_for(p.pid);
+            p.mem = self.rss_for(p.pid);
         }
         self.prev = current;
 
@@ -71,18 +77,25 @@ impl Collector {
         }
     }
 
-    fn name_for(&mut self, pid: u32) -> String {
-        if let Some(name) = self.names.get(&pid) {
-            return name.clone();
+    /// Live `COMM_MAP` wins; fall back to the startup `/proc` snapshot.
+    fn name_for(&self, tgid: u32) -> String {
+        if let Ok(comm) = self.comm.get(&tgid, 0) {
+            return decode_comm(comm);
         }
-        // Cache successes only; a miss may resolve once a later `exec` lands.
-        match self.comm.get(&pid, 0).ok().map(decode_comm) {
-            Some(name) => {
-                self.names.insert(pid, name.clone());
-                name
-            }
-            None => UNKNOWN.to_owned(),
-        }
+        self.name_seed
+            .get(&tgid)
+            .cloned()
+            .unwrap_or_else(|| UNKNOWN.to_owned())
+    }
+
+    /// Exact RSS from `/proc/<tgid>/statm` (field 1, resident pages). `None` if
+    /// the process exited between the snapshot and this read.
+    fn rss_for(&self, tgid: u32) -> Option<MemMetrics> {
+        let statm = std::fs::read_to_string(format!("/proc/{tgid}/statm")).ok()?;
+        let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+        Some(MemMetrics {
+            rss_bytes: pages * self.page_size,
+        })
     }
 }
 
@@ -96,7 +109,8 @@ pub async fn collector_loop(shared: Arc<ArcSwap<SystemState>>, mut collector: Co
     }
 }
 
-/// Cumulative on-CPU nanoseconds per pid at one instant, plus when it was taken.
+/// Cumulative on-CPU nanoseconds per process at one instant, plus when it was
+/// taken.
 struct Totals {
     at: Instant,
     by_pid: HashMap<u32, u64>,
@@ -158,20 +172,24 @@ fn decode_comm(raw: [u8; COMM_LEN]) -> String {
     String::from_utf8_lossy(&raw[..end]).trim().to_owned()
 }
 
+fn page_size() -> u64 {
+    // SAFETY: sysconf with a valid name is always safe to call.
+    let n = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if n > 0 { n as u64 } else { 4096 }
+}
+
 /// Seed names for processes that predate truetop and never fired a capturable
 /// `exec`.
 fn backfill_proc_names() -> HashMap<u32, String> {
-    let mut names = HashMap::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
-        return names;
+        return HashMap::new();
     };
-    for entry in entries.flatten() {
-        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse().ok()) else {
-            continue;
-        };
-        if let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
-            names.insert(pid, comm.trim().to_owned());
-        }
-    }
-    names
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let pid = e.file_name().to_str()?.parse().ok()?;
+            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+            Some((pid, comm.trim().to_owned()))
+        })
+        .collect()
 }

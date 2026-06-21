@@ -36,8 +36,10 @@ pub fn sched_process_exec(ctx: RawTracePointContext) -> i32 {
     0
 }
 
-/// Drop a dead process's name; called only when its last thread exits.
+/// Drop a dead process's name; called by the shared exit hook on the leader.
 #[inline(always)]
-pub(crate) fn forget(tgid: u32) {
-    let _ = COMM_MAP.remove(tgid);
+pub(crate) fn forget(tid: u32, tgid: u32) {
+    if tid == tgid {
+        let _ = COMM_MAP.remove(tgid);
+    }
 }

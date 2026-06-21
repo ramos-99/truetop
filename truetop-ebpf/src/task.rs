@@ -1,4 +1,4 @@
-//! Shared task introspection. The CO-RE field reads every hook relies on.
+//! Shared CO-RE task introspection used by the scheduler and lifecycle hooks.
 
 use aya_ebpf::{Global, helpers::bpf_probe_read_kernel, programs::RawTracePointContext};
 

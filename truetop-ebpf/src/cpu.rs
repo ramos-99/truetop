@@ -31,16 +31,14 @@ pub fn sched_switch(ctx: RawTracePointContext) -> i32 {
     0
 }
 
-/// Drop a dead thread's stopwatch; called from the shared exit hook.
+/// Drop a dead task's CPU state; called by the shared exit hook. The stopwatch
+/// is per-thread; the accumulator is per-process, so reap it on the leader only.
 #[inline(always)]
-pub(crate) fn forget_thread(tid: u32) {
+pub(crate) fn forget(tid: u32, tgid: u32) {
     let _ = START_TIME.remove(tid);
-}
-
-/// Drop a dead process's accumulator; called only when its last thread exits.
-#[inline(always)]
-pub(crate) fn forget_process(tgid: u32) {
-    let _ = CPU_NS.remove(tgid);
+    if tid == tgid {
+        let _ = CPU_NS.remove(tgid);
+    }
 }
 
 /// Add the slice the outgoing thread just ran to its process total.

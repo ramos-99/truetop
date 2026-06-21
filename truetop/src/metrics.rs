@@ -8,9 +8,8 @@ pub struct CpuMetrics {
     pub cpu_percent: f64,
 }
 
-/// RSS memory. Phase 2 (`rss_stat`).
+/// Resident set size in bytes (read from `/proc`; see `backend`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-#[allow(dead_code)]
 pub struct MemMetrics {
     pub rss_bytes: u64,
 }

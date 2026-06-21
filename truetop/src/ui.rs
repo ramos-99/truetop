@@ -33,6 +33,15 @@ use crate::{backend::SystemState, metrics::ProcessMetrics};
 /// Poll timeout that paces the event loop at ~60 fps (16 ms ≈ 62.5 Hz).
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
+/// Table columns as `(title, width)` — one source of truth for the header and
+/// the layout. [`process_row`] emits cells in this order.
+const COLUMNS: [(&str, Constraint); 4] = [
+    ("PID", Constraint::Length(8)),
+    ("CPU%", Constraint::Length(8)),
+    ("MEM", Constraint::Length(10)),
+    ("COMMAND", Constraint::Fill(1)),
+];
+
 /// Run the render loop on the calling (main) thread until the user quits or
 /// `running` is cleared by an external signal handler.
 ///
@@ -69,15 +78,11 @@ fn event_loop(
 }
 
 fn draw(frame: &mut Frame, state: &SystemState) {
-    let header = Row::new([Cell::from("PID"), Cell::from("CPU%"), Cell::from("COMMAND")])
+    let header = Row::new(COLUMNS.map(|(title, _)| Cell::from(title)))
         .style(Style::new().add_modifier(Modifier::BOLD | Modifier::REVERSED));
 
     let rows = state.processes.iter().map(process_row);
-    let widths = [
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Fill(1),
-    ];
+    let widths = COLUMNS.map(|(_, width)| width);
 
     let title = Line::from(format!(
         " truetop — tick {} · {} procs · q to quit ",
@@ -94,12 +99,32 @@ fn draw(frame: &mut Frame, state: &SystemState) {
     frame.render_widget(table, frame.area());
 }
 
-/// One process → one table row. Formatting is lazy here, only for drawn rows
-/// (renderer contract, CLAUDE.md §3).
+/// One process → one table row, in [`COLUMNS`] order. Formatting is lazy here,
+/// only for drawn rows (renderer contract, CLAUDE.md §3).
 fn process_row(p: &ProcessMetrics) -> Row<'static> {
+    let mem = p
+        .mem
+        .map_or_else(|| "—".to_owned(), |m| format_bytes(m.rss_bytes));
     Row::new([
         Cell::from(p.pid.to_string()),
         Cell::from(format!("{:>5.1}", p.cpu.cpu_percent)),
+        Cell::from(mem),
         Cell::from(p.name.clone()),
     ])
+}
+
+/// Render a byte count as a compact human-readable string (e.g. `12.3 M`).
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} {}", UNITS[unit])
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }

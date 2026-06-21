@@ -1,9 +1,6 @@
-//! Process lifecycle. A single `exit` hook fans cleanup out to every subsystem
-//! so no map accumulates dead pids (CLAUDE.md §2).
-//!
-//! `sched_process_exit` fires per *thread*: drop the thread's stopwatch always,
-//! but only reap the process-keyed maps when the group leader (`tid == tgid`)
-//! goes — otherwise one dying thread would wipe a live process.
+//! Process lifecycle. The exit hook fans cleanup out to every subsystem so no
+//! map accumulates dead pids (CLAUDE.md §2); each `forget` owns its own
+//! thread- vs process-scoped policy.
 
 use aya_ebpf::{macros::raw_tracepoint, programs::RawTracePointContext};
 
@@ -17,12 +14,8 @@ pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
     if tid == 0 {
         return 0;
     }
-    cpu::forget_thread(tid);
-
     let tgid = task.tgid();
-    if tid == tgid {
-        cpu::forget_process(tgid);
-        comm::forget(tgid);
-    }
+    cpu::forget(tid, tgid);
+    comm::forget(tid, tgid);
     0
 }

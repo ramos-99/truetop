@@ -5,6 +5,10 @@
 //! - [`cpu`]       — CPU time via `sched_switch` (the hotpath),
 //! - [`comm`]      — process identity via `sched_process_exec` (cold path),
 //! - [`lifecycle`] — `sched_process_exit` cleanup fanned out to each subsystem.
+//!
+//! Memory is deliberately *not* here — see `truetop`'s collector and the README:
+//! since Linux 6.2 RSS lives in a `percpu_counter` whose exact value can't be
+//! summed from eBPF cheaply, so it is read from `/proc` in user space.
 
 #![no_std]
 #![no_main]
