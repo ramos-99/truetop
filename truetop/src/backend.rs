@@ -26,7 +26,6 @@ const UNKNOWN: &str = "<unknown>";
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemState {
-    pub tick: u64,
     pub processes: Vec<ProcessMetrics>,
 }
 
@@ -39,7 +38,6 @@ pub struct Collector {
     page_size: u64,
     prev: Totals,
     name_seed: HashMap<u32, String>,
-    tick: u64,
 }
 
 impl Collector {
@@ -55,13 +53,10 @@ impl Collector {
             page_size: page_size(),
             prev: Totals::default(),
             name_seed: backfill_proc_names(),
-            tick: 0,
         }
     }
 
     fn tick(&mut self) -> SystemState {
-        self.tick = self.tick.wrapping_add(1);
-
         let current = Totals::read(&self.cpu_ns);
         // Sorted and capped to the viewport; only these rows are enriched.
         let mut processes = current.utilisation_since(&self.prev, self.ncpus);
@@ -71,10 +66,7 @@ impl Collector {
         }
         self.prev = current;
 
-        SystemState {
-            tick: self.tick,
-            processes,
-        }
+        SystemState { processes }
     }
 
     /// Live `COMM_MAP` wins; fall back to the startup `/proc` snapshot.

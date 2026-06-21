@@ -22,10 +22,10 @@ use arc_swap::ArcSwap;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::Constraint,
-    style::{Modifier, Style, Stylize},
-    text::Line,
-    widgets::{Block, Cell, Row, Table},
+    layout::{Alignment, Constraint},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Text},
+    widgets::{Block, BorderType, Cell, Row, Table},
 };
 
 use crate::{backend::SystemState, metrics::ProcessMetrics};
@@ -33,13 +33,16 @@ use crate::{backend::SystemState, metrics::ProcessMetrics};
 /// Poll timeout that paces the event loop at ~60 fps (16 ms ≈ 62.5 Hz).
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
-/// Table columns as `(title, width)` — one source of truth for the header and
-/// the layout. [`process_row`] emits cells in this order.
-const COLUMNS: [(&str, Constraint); 4] = [
-    ("PID", Constraint::Length(8)),
-    ("CPU%", Constraint::Length(8)),
-    ("MEM", Constraint::Length(10)),
-    ("COMMAND", Constraint::Fill(1)),
+/// Accent colour for the frame and header.
+const ACCENT: Color = Color::Cyan;
+
+/// Table columns as `(title, width, alignment)` — one source of truth for the
+/// header and the row layout. [`process_row`] emits cells in this order.
+const COLUMNS: [(&str, Constraint, Alignment); 4] = [
+    ("PID", Constraint::Length(7), Alignment::Right),
+    ("CPU%", Constraint::Length(6), Alignment::Right),
+    ("MEM", Constraint::Length(9), Alignment::Right),
+    ("COMMAND", Constraint::Fill(1), Alignment::Left),
 ];
 
 /// Run the render loop on the calling (main) thread until the user quits or
@@ -78,39 +81,83 @@ fn event_loop(
 }
 
 fn draw(frame: &mut Frame, state: &SystemState) {
-    let header = Row::new(COLUMNS.map(|(title, _)| Cell::from(title)))
-        .style(Style::new().add_modifier(Modifier::BOLD | Modifier::REVERSED));
+    let header = Row::new(COLUMNS.map(|(title, _, align)| header_cell(title, align))).style(
+        Style::new()
+            .fg(Color::Black)
+            .bg(ACCENT)
+            .add_modifier(Modifier::BOLD),
+    );
 
+    let widths = COLUMNS.map(|(_, width, _)| width);
     let rows = state.processes.iter().map(process_row);
-    let widths = COLUMNS.map(|(_, width)| width);
 
-    let title = Line::from(format!(
-        " truetop — tick {} · {} procs · q to quit ",
-        state.tick,
-        state.processes.len()
-    ));
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(Color::DarkGray))
+        .title_top(Line::from(" truetop ".fg(ACCENT).bold()))
+        .title_top(
+            Line::from(format!(" {} procs ", state.processes.len()))
+                .right_aligned()
+                .dim(),
+        )
+        .title_bottom(Line::from(" q/esc quit ".dim()).right_aligned());
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::bordered().title(title.bold()))
-        .column_spacing(1)
-        .row_highlight_style(Style::new().reversed());
+        .block(block)
+        .column_spacing(2);
 
     frame.render_widget(table, frame.area());
 }
 
-/// One process → one table row, in [`COLUMNS`] order. Formatting is lazy here,
-/// only for drawn rows (renderer contract, CLAUDE.md §3).
+fn header_cell(title: &'static str, align: Alignment) -> Cell<'static> {
+    Cell::from(Text::from(title).alignment(align))
+}
+
+/// One process → one table row, in [`COLUMNS`] order. Formatting and styling are
+/// lazy here, only for drawn rows (renderer contract, CLAUDE.md §3).
 fn process_row(p: &ProcessMetrics) -> Row<'static> {
-    let mem = p
-        .mem
-        .map_or_else(|| "—".to_owned(), |m| format_bytes(m.rss_bytes));
+    let [pid, cpu, mem, cmd] = COLUMNS.map(|(_, _, align)| align);
     Row::new([
-        Cell::from(p.pid.to_string()),
-        Cell::from(format!("{:>5.1}", p.cpu.cpu_percent)),
-        Cell::from(mem),
-        Cell::from(p.name.clone()),
+        cell(p.pid.to_string(), pid, Style::new().dim()),
+        cell(
+            format!("{:.1}", p.cpu.cpu_percent),
+            cpu,
+            cpu_style(p.cpu.cpu_percent),
+        ),
+        cell(mem_text(p), mem, mem_style(p)),
+        cell(p.name.clone(), cmd, Style::new()),
     ])
+}
+
+fn cell(text: String, align: Alignment, style: Style) -> Cell<'static> {
+    Cell::from(Text::from(text).alignment(align)).style(style)
+}
+
+/// Cool→hot gradient so busy processes stand out; idle ones recede.
+fn cpu_style(percent: f64) -> Style {
+    let colour = if percent < 0.05 {
+        Color::DarkGray
+    } else if percent < 25.0 {
+        Color::Green
+    } else if percent < 60.0 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    Style::new().fg(colour)
+}
+
+fn mem_text(p: &ProcessMetrics) -> String {
+    p.mem
+        .map_or_else(|| "—".to_owned(), |m| format_bytes(m.rss_bytes))
+}
+
+fn mem_style(p: &ProcessMetrics) -> Style {
+    match p.mem {
+        Some(m) if m.rss_bytes > 0 => Style::new(),
+        _ => Style::new().dim(),
+    }
 }
 
 /// Render a byte count as a compact human-readable string (e.g. `12.3 M`).
