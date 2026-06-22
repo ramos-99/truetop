@@ -39,3 +39,4 @@ rust-project.json
 
 # Benchmark run artifacts (the harness and the final scaling.svg are tracked)
 bench/macro/results.csv
+__pycache__/
