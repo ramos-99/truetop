@@ -12,6 +12,7 @@
 //!   - a SIGINT/SIGTERM listener flips a shared flag for graceful teardown.
 
 mod backend;
+mod batch;
 mod btf;
 mod metrics;
 mod ui;
@@ -25,7 +26,7 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use aya::{
     EbpfLoader,
-    maps::{HashMap, PerCpuHashMap},
+    maps::{HashMap, Map},
     programs::RawTracePoint,
     util::nr_cpus,
 };
@@ -54,8 +55,12 @@ async fn main() -> anyhow::Result<()> {
     attach_raw_tracepoint(&mut ebpf, "sched_process_exec")?;
     attach_raw_tracepoint(&mut ebpf, "sched_process_exit")?;
 
-    let cpu_ns: PerCpuHashMap<_, u32, u64> =
-        PerCpuHashMap::try_from(ebpf.take_map("CPU_NS").context("CPU_NS map not found")?)?;
+    // Keep CPU_NS as raw MapData so the collector can do BPF_MAP_LOOKUP_BATCH
+    // directly (aya exposes no batch API; see `batch`).
+    let Map::PerCpuHashMap(cpu_ns) = ebpf.take_map("CPU_NS").context("CPU_NS map not found")?
+    else {
+        anyhow::bail!("CPU_NS is not a per-CPU hash map");
+    };
     let comm: HashMap<_, u32, [u8; COMM_LEN]> =
         HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
     let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;

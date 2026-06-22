@@ -1,6 +1,7 @@
 //! Collector (backend) — producer side of the double-buffer (CLAUDE.md §3).
-//! Pulls the eBPF CPU counters at 1 Hz, derives per-interval CPU%, resolves
-//! names and RSS, and publishes an immutable snapshot via an atomic pointer swap.
+//! Pulls the eBPF CPU counters at 1 Hz via one batched map read, derives
+//! per-interval CPU%, resolves names and RSS, and publishes an immutable
+//! snapshot via an atomic pointer swap.
 //!
 //! Names use the event-driven identity model: the kernel captures `comm` on
 //! `exec` into `COMM_MAP`; a one-time `/proc` snapshot seeds processes that
@@ -10,16 +11,20 @@
 
 use std::{
     collections::HashMap,
+    os::fd::{AsFd, AsRawFd},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use arc_swap::ArcSwap;
-use aya::maps::{HashMap as BpfHashMap, MapData, PerCpuHashMap};
+use aya::maps::{HashMap as BpfHashMap, MapData};
 use tokio::time::{MissedTickBehavior, interval};
 use truetop_common::COMM_LEN;
 
-use crate::metrics::{CpuMetrics, MemMetrics, ProcessMetrics};
+use crate::{
+    batch::BatchReader,
+    metrics::{CpuMetrics, MemMetrics, ProcessMetrics},
+};
 
 const MAX_ROWS: usize = 256;
 const UNKNOWN: &str = "<unknown>";
@@ -32,7 +37,8 @@ pub struct SystemState {
 /// Owns the persistent collection state; each [`Collector::tick`] reads the maps
 /// and produces the next snapshot.
 pub struct Collector {
-    cpu_ns: PerCpuHashMap<MapData, u32, u64>,
+    cpu_ns: MapData,
+    reader: BatchReader,
     comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
     ncpus: f64,
     page_size: u64,
@@ -42,14 +48,16 @@ pub struct Collector {
 
 impl Collector {
     pub fn new(
-        cpu_ns: PerCpuHashMap<MapData, u32, u64>,
+        cpu_ns: MapData,
         comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
         ncpus: usize,
     ) -> Self {
+        let ncpus = ncpus.max(1);
         Self {
             cpu_ns,
+            reader: BatchReader::new(ncpus),
             comm,
-            ncpus: ncpus.max(1) as f64,
+            ncpus: ncpus as f64,
             page_size: page_size(),
             prev: Totals::default(),
             name_seed: backfill_proc_names(),
@@ -57,7 +65,12 @@ impl Collector {
     }
 
     fn tick(&mut self) -> SystemState {
-        let current = Totals::read(&self.cpu_ns);
+        let fd = self.cpu_ns.fd().as_fd().as_raw_fd();
+        let current = Totals {
+            at: Some(Instant::now()),
+            by_pid: self.reader.sum_per_cpu(fd),
+        };
+
         // Sorted and capped to the viewport; only these rows are enriched.
         let mut processes = current.utilisation_since(&self.prev, self.ncpus);
         for p in &mut processes {
@@ -103,35 +116,18 @@ pub async fn collector_loop(shared: Arc<ArcSwap<SystemState>>, mut collector: Co
 
 /// Cumulative on-CPU nanoseconds per process at one instant, plus when it was
 /// taken.
+#[derive(Default)]
 struct Totals {
-    at: Instant,
+    at: Option<Instant>,
     by_pid: HashMap<u32, u64>,
 }
 
-impl Default for Totals {
-    fn default() -> Self {
-        Self {
-            at: Instant::now(),
-            by_pid: HashMap::new(),
-        }
-    }
-}
-
 impl Totals {
-    fn read(cpu_ns: &PerCpuHashMap<MapData, u32, u64>) -> Self {
-        let by_pid = cpu_ns
-            .iter()
-            .flatten()
-            .map(|(pid, per_cpu)| (pid, per_cpu.iter().copied().sum()))
-            .collect();
-        Self {
-            at: Instant::now(),
-            by_pid,
-        }
-    }
-
     fn utilisation_since(&self, prev: &Self, ncpus: f64) -> Vec<ProcessMetrics> {
-        let elapsed_ns = self.at.duration_since(prev.at).as_nanos() as f64;
+        let elapsed_ns = match (self.at, prev.at) {
+            (Some(now), Some(was)) => now.duration_since(was).as_nanos() as f64,
+            _ => 0.0,
+        };
 
         let mut out: Vec<ProcessMetrics> = self
             .by_pid
