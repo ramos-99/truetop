@@ -5,7 +5,18 @@ Both are O(N) in time; the difference is a constant factor — the eBPF path mak
 no per-process syscall, avoiding the VFS open/read and the text formatting of
 `/proc/<pid>/stat`.
 
-## scaling
+Two benchmarks measure two different things, and the claim is both together:
+
+- **micro** — the per-process *work*, modelled in memory. It isolates the
+  constant factor (eBPF ~4 ns vs procfs ~14 µs per process) and deliberately
+  makes no `bpf()` call, so it is not a syscall-count measurement.
+- **macro** — the real, end-to-end *syscall* count per refresh, traced with
+  `strace` against the actual tools. This is where the O(1)/O(N) split shows.
+
+The micro answers "is the per-process work cheaper?"; the macro answers "does it
+cut syscalls at scale?". Neither alone is the headline.
+
+## micro: per-process work
 
 ```sh
 cargo bench -p truetop-bench
@@ -22,16 +33,11 @@ processes):
 Criterion writes a log-Y HTML report to `target/criterion/`. Both lines rise
 linearly; the eBPF one sits ~3500x lower (~4 ns vs ~14 µs per process).
 
-`ebpf_batched` is modelled in memory, so it makes no real `bpf()` call — it
-measures the per-process work, not the syscall count. The syscall count is the
-collector itself (`batch::BatchReader`, one `BPF_MAP_LOOKUP_BATCH` per tick),
-verifiable with `strace -c` in the macro benchmark.
+The real syscall count is the collector itself — one `BPF_MAP_LOOKUP_BATCH` per
+tick (`batch::BatchReader`), measured in the macro benchmark below.
 
 `procfs_per_pid` re-reads `/proc/self/stat` (one cached file), the best case for
-procfs; btop reads N distinct files, so the real gap is wider.
-
-Not measured here: the `sched_switch` program runs on every context switch (O(1)
-per event, not zero); `bpftool prog show` reports that cost.
+procfs; the macro benchmark reads N distinct files, so the real gap is wider.
 
 Results compare against the last run's baseline, so a busy machine prints
 spurious regressed/improved lines — `rm -rf target/criterion` and pin the
@@ -47,7 +53,8 @@ Counts per-process data syscalls per refresh against the real tools under
 `strace -fy`: `read`/`pread64` on `/proc/<pid>/{stat,statm,status,cmdline}`
 (`-y` resolves cached fds back to paths, so reads off a held fd still count)
 plus `bpf`, divided by refreshes. A load generator (`src/bin/load.rs`) forks N
-idle children to sweep the process count.
+processes that reschedule at ~0% CPU — truly idle ones never reschedule, so no
+monitor would see them.
 
 truetop runs headless (`truetop --bench <ticks>`). strace ptrace-traps every
 syscall, and the TUI input poll issues enough of them to starve the collector
@@ -66,10 +73,17 @@ is flat — the collector reads the CPU map in one batch and touches `/proc` onl
 for the visible viewport (256 rows, one `statm` read and one name lookup each),
 independent of N.
 
-The lines cross at a few hundred processes: below that the procfs tools open
-fewer files than the viewport and are as cheap or cheaper. truetop wins past it,
-and the gap is unbounded — flat vs linear, ~12-15x fewer syscalls at 5300
-processes and diverging. The win is asymptotic, not at every scale.
+truetop issues fewer syscalls than both at every measured point — 264 vs htop
+334 / top 764 at 380 processes, 784 vs 11750 / 9601 at 5382. Its cost is bounded
+by the viewport and counts only *active* processes; top and htop stat every
+process each refresh. The flat ~784 is the saturated 256-row viewport; at 380
+processes (mostly idle) truetop tracks the active count instead. (The visible
+crossing in the plot is top and htop, not truetop.)
+
+A crossover exists only below where it matters: if fewer than ~256 processes are
+all active at once, procfs's single stat per file can undercut truetop's per-row
+read plus name lookup. Real systems run hundreds of processes with few active,
+so truetop wins in practice, and the gap is unbounded as N grows.
 
 Not counted on truetop's side: the `sched_switch` program, which runs in the
 kernel on every context switch (`bpftool prog show` reports that cost). The

@@ -68,8 +68,19 @@ deploying.
 
 Per-process CPU extraction is O(1) in syscalls (one `BPF_MAP_LOOKUP_BATCH`) vs
 procfs's O(N) — both O(N) in time, but a ~3500x constant-factor win by skipping
-the per-process VFS read. See [bench/BENCHMARKS.md](bench/BENCHMARKS.md)
-(`cargo bench -p truetop-bench`).
+the per-process VFS read.
+
+Two benchmarks, measuring two things: a micro benchmark isolates the per-process
+*work* (eBPF ~4 ns vs procfs ~14 µs, modelled in memory — no `bpf()` call), and
+a macro benchmark counts the real *syscalls* per refresh with `strace` against
+top and htop. truetop issues fewer at every point measured (380–5382 processes)
+and stays flat while procfs scales linearly — ~12-15x fewer at 5k.
+
+btop is excluded from the macro run because its TUI defeats `strace` the same way
+truetop's does, not because it would scale differently: it reads `/proc/<pid>`
+per process, the same O(N) procfs class as htop.
+
+See [bench/BENCHMARKS.md](bench/BENCHMARKS.md) (`cargo bench -p truetop-bench`).
 
 ## License
 
