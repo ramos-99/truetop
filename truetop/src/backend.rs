@@ -114,6 +114,16 @@ pub async fn collector_loop(shared: Arc<ArcSwap<SystemState>>, mut collector: Co
     }
 }
 
+/// Run `ticks` collector iterations at 1 Hz with no UI, for tracing the
+/// collection path without the render loop's syscalls.
+pub fn run_headless(mut collector: Collector, ticks: u32) {
+    for i in 1..=ticks {
+        std::thread::sleep(Duration::from_secs(1));
+        let snapshot = collector.tick();
+        println!("tick {i}/{ticks}: {} processes", snapshot.processes.len());
+    }
+}
+
 /// Cumulative on-CPU nanoseconds per process at one instant, plus when it was
 /// taken.
 #[derive(Default)]

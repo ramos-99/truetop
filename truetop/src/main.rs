@@ -1,15 +1,9 @@
 //! truetop — user-space entrypoint.
 //!
-//! The eBPF program reads `task_struct::pid` through an offset resolved at
-//! runtime against the live kernel BTF and injected via a global
-//! (`btf`/`PID_OFFSET`), so one binary works across kernel versions/arches. It
-//! accumulates per-CPU on-CPU nanoseconds; `backend` derives utilisation.
-//!
-//! Topology:
-//!   - one shared `ArcSwap<SystemState>` (the double buffer),
-//!   - the collector runs as a Tokio task at 1 Hz (`backend`),
-//!   - the renderer owns the main thread at ~60 fps (`ui`),
-//!   - a SIGINT/SIGTERM listener flips a shared flag for graceful teardown.
+//! The eBPF program reads `task_struct` fields through offsets resolved at
+//! runtime against the live kernel BTF and injected as globals (`btf`), so one
+//! binary works across kernel versions/arches. It accumulates per-CPU on-CPU
+//! nanoseconds; `backend` derives utilisation and `ui` renders it.
 
 mod backend;
 mod batch;
@@ -37,60 +31,32 @@ use truetop_common::COMM_LEN;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
+    raise_memlock();
 
-    // Raise the memlock rlimit before the loader allocates any BPF map; kernels
-    // without memcg-based accounting need it, see https://lwn.net/Articles/837122/.
+    let mut ebpf = load_ebpf()?;
+    let collector = setup_collector(&mut ebpf)?;
+
+    match bench_ticks() {
+        Some(ticks) => backend::run_headless(collector, ticks),
+        None => run_ui(collector).await?,
+    }
+
+    // `ebpf` owns the tracepoint links; dropping it here detaches them.
+    drop(ebpf);
+    Ok(())
+}
+
+/// Raise the memlock rlimit before the loader allocates any BPF map; kernels
+/// without memcg-based accounting need it (https://lwn.net/Articles/837122/).
+fn raise_memlock() {
     let rlim = libc::rlimit {
         rlim_cur: libc::RLIM_INFINITY,
         rlim_max: libc::RLIM_INFINITY,
     };
-    let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
-    if ret != 0 {
-        log::debug!("remove limit on locked memory failed, ret is: {ret}");
+    // SAFETY: a valid resource id and an initialised rlimit.
+    if unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) } != 0 {
+        log::debug!("could not raise RLIMIT_MEMLOCK");
     }
-
-    let mut ebpf = load_ebpf()?;
-
-    attach_raw_tracepoint(&mut ebpf, "sched_switch")?;
-    attach_raw_tracepoint(&mut ebpf, "sched_process_exec")?;
-    attach_raw_tracepoint(&mut ebpf, "sched_process_exit")?;
-
-    // Keep CPU_NS as raw MapData so the collector can do BPF_MAP_LOOKUP_BATCH
-    // directly (aya exposes no batch API; see `batch`).
-    let Map::PerCpuHashMap(cpu_ns) = ebpf.take_map("CPU_NS").context("CPU_NS map not found")?
-    else {
-        anyhow::bail!("CPU_NS is not a per-CPU hash map");
-    };
-    let comm: HashMap<_, u32, [u8; COMM_LEN]> =
-        HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
-    let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
-
-    let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
-
-    let running = Arc::new(AtomicBool::new(true));
-
-    let collector = tokio::spawn(backend::collector_loop(
-        Arc::clone(&shared),
-        Collector::new(cpu_ns, comm, ncpus),
-    ));
-
-    // Graceful teardown: translate SIGINT/SIGTERM into a run-flag clear so the
-    // render loop unwinds, restores the terminal, and lets us detach cleanly.
-    let signal_running = Arc::clone(&running);
-    let signal_task = tokio::spawn(async move {
-        wait_for_shutdown_signal().await;
-        signal_running.store(false, Ordering::Relaxed);
-    });
-
-    let render_result = ui::render_app(Arc::clone(&shared), Arc::clone(&running));
-
-    running.store(false, Ordering::Relaxed);
-    collector.abort();
-    signal_task.abort();
-
-    // `ebpf` owns the tracepoint links; dropping it here detaches them.
-    drop(ebpf);
-    render_result.map_err(Into::into)
 }
 
 /// Load the eBPF object, resolving task_struct field offsets from the live
@@ -110,6 +76,47 @@ fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
         .context("loading eBPF object")
 }
 
+/// Attach the tracepoints and build a [`Collector`] over the CPU and comm maps.
+/// `ebpf` must outlive the collector — it owns the tracepoint links.
+fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
+    for tp in ["sched_switch", "sched_process_exec", "sched_process_exit"] {
+        attach_raw_tracepoint(ebpf, tp)?;
+    }
+
+    // CPU_NS stays raw MapData so the collector can do BPF_MAP_LOOKUP_BATCH (aya
+    // exposes no batch API; see `batch`).
+    let Map::PerCpuHashMap(cpu_ns) = ebpf.take_map("CPU_NS").context("CPU_NS map not found")?
+    else {
+        anyhow::bail!("CPU_NS is not a per-CPU hash map");
+    };
+    let comm: HashMap<_, u32, [u8; COMM_LEN]> =
+        HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
+    let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
+
+    Ok(Collector::new(cpu_ns, comm, ncpus))
+}
+
+/// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a
+/// SIGINT/SIGTERM listener — until the user quits.
+async fn run_ui(collector: Collector) -> anyhow::Result<()> {
+    let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
+    let running = Arc::new(AtomicBool::new(true));
+
+    let collector_task = tokio::spawn(backend::collector_loop(Arc::clone(&shared), collector));
+    let signal_running = Arc::clone(&running);
+    let signal_task = tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        signal_running.store(false, Ordering::Relaxed);
+    });
+
+    let result = ui::render_app(Arc::clone(&shared), Arc::clone(&running));
+
+    running.store(false, Ordering::Relaxed);
+    collector_task.abort();
+    signal_task.abort();
+    result.map_err(Into::into)
+}
+
 /// Load and attach the raw tracepoint whose program and tracepoint share `name`.
 fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Result<()> {
     let program: &mut RawTracePoint = ebpf
@@ -123,6 +130,17 @@ fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Re
         .attach(name)
         .with_context(|| format!("attaching `{name}`"))?;
     Ok(())
+}
+
+/// `--bench <TICKS>`: headless mode running `TICKS` collector ticks, no UI.
+fn bench_ticks() -> Option<u32> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--bench" {
+            return args.next()?.parse().ok();
+        }
+    }
+    None
 }
 
 /// Resolve when the process receives SIGINT or (on Unix) SIGTERM.
