@@ -64,6 +64,13 @@ Until then this is the one metric not collected in-kernel.
 nanosecond-level, but not zero. Benchmark on latency-sensitive hosts before
 deploying.
 
+## Benchmarks
+
+Per-process CPU extraction is O(1) in syscalls (one `BPF_MAP_LOOKUP_BATCH`) vs
+procfs's O(N) — both O(N) in time, but a ~3500x constant-factor win by skipping
+the per-process VFS read. See [bench/BENCHMARKS.md](bench/BENCHMARKS.md)
+(`cargo bench -p truetop-bench`).
+
 ## License
 
 User-space: MIT OR Apache-2.0. eBPF code (`truetop-ebpf/`): GPL-2.0 OR MIT.
