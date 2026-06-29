@@ -175,3 +175,28 @@ fn format_bytes(bytes: u64) -> String {
         format!("{value:.1} {}", UNITS[unit])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bytes_keeps_raw_count_below_one_kib() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_bytes_scales_to_higher_units() {
+        assert_eq!(format_bytes(1024), "1.0 K");
+        assert_eq!(format_bytes(1536), "1.5 K");
+        assert_eq!(format_bytes(1024 * 1024), "1.0 M");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.0 G");
+    }
+
+    #[test]
+    fn format_bytes_caps_at_terabytes() {
+        assert!(format_bytes(u64::MAX).ends_with(" T"));
+    }
+}

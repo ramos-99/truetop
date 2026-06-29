@@ -93,13 +93,12 @@ impl Collector {
             .unwrap_or_else(|| UNKNOWN.to_owned())
     }
 
-    /// Exact RSS from `/proc/<tgid>/statm` (field 1, resident pages). `None` if
-    /// the process exited between the snapshot and this read.
+    /// Exact RSS from `/proc/<tgid>/statm`. `None` if the process exited between
+    /// the snapshot and this read.
     fn rss_for(&self, tgid: u32) -> Option<MemMetrics> {
         let statm = std::fs::read_to_string(format!("/proc/{tgid}/statm")).ok()?;
-        let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
         Some(MemMetrics {
-            rss_bytes: pages * self.page_size,
+            rss_bytes: parse_statm_pages(&statm)? * self.page_size,
         })
     }
 }
@@ -165,6 +164,12 @@ impl Totals {
     }
 }
 
+/// Resident-set pages from a `/proc/<pid>/statm` line — the second whitespace
+/// field. `None` if the line is empty or malformed.
+fn parse_statm_pages(statm: &str) -> Option<u64> {
+    statm.split_whitespace().nth(1)?.parse().ok()
+}
+
 fn decode_comm(raw: [u8; COMM_LEN]) -> String {
     let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
     String::from_utf8_lossy(&raw[..end]).trim().to_owned()
@@ -190,4 +195,108 @@ fn backfill_proc_names() -> HashMap<u32, String> {
             Some((pid, comm.trim().to_owned()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    fn comm(bytes: &[u8]) -> [u8; COMM_LEN] {
+        let mut raw = [0u8; COMM_LEN];
+        raw[..bytes.len()].copy_from_slice(bytes);
+        raw
+    }
+
+    fn totals(at: Instant, pairs: &[(u32, u64)]) -> Totals {
+        Totals {
+            at: Some(at),
+            by_pid: pairs.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn parse_statm_reads_resident_pages() {
+        assert_eq!(parse_statm_pages("4096 512 64 1 0 128 0"), Some(512));
+        assert_eq!(parse_statm_pages("  4096   512  "), Some(512));
+    }
+
+    #[test]
+    fn parse_statm_rejects_malformed() {
+        assert_eq!(parse_statm_pages(""), None);
+        assert_eq!(parse_statm_pages("4096"), None);
+        assert_eq!(parse_statm_pages("4096 notanumber"), None);
+    }
+
+    #[test]
+    fn decode_comm_stops_at_nul() {
+        assert_eq!(decode_comm(comm(b"bash\0ignored")), "bash");
+    }
+
+    #[test]
+    fn decode_comm_reads_full_buffer() {
+        assert_eq!(decode_comm([b'a'; COMM_LEN]), "a".repeat(COMM_LEN));
+    }
+
+    #[test]
+    fn decode_comm_is_lossy_on_invalid_utf8() {
+        assert_eq!(decode_comm(comm(&[0xff, 0xff])), "\u{fffd}\u{fffd}");
+    }
+
+    #[test]
+    fn utilisation_is_zero_without_baseline() {
+        let base = Instant::now();
+        let prev = totals(base, &[]);
+        let cur = totals(base + Duration::from_secs(1), &[(1, 1_000_000_000)]);
+        let rows = cur.utilisation_since(&prev, 1.0);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cpu.cpu_percent, 0.0);
+    }
+
+    #[test]
+    fn utilisation_scales_by_cpu_count() {
+        let base = Instant::now();
+        let prev = totals(base, &[(1, 0)]);
+        // One core-second of CPU over a one-second interval.
+        let cur = totals(base + Duration::from_secs(1), &[(1, 1_000_000_000)]);
+        assert!((cur.utilisation_since(&prev, 1.0)[0].cpu.cpu_percent - 100.0).abs() < 1e-6);
+        assert!((cur.utilisation_since(&prev, 4.0)[0].cpu.cpu_percent - 25.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn utilisation_saturates_on_counter_reset() {
+        let base = Instant::now();
+        let prev = totals(base, &[(1, 1_000_000_000)]);
+        let cur = totals(base + Duration::from_secs(1), &[(1, 0)]); // PID reuse
+        assert_eq!(cur.utilisation_since(&prev, 1.0)[0].cpu.cpu_percent, 0.0);
+    }
+
+    #[test]
+    fn utilisation_clamps_to_single_core() {
+        let base = Instant::now();
+        let prev = totals(base, &[(1, 0)]);
+        // Ten core-seconds in one second is 1000%; clamp to 100.
+        let cur = totals(base + Duration::from_secs(1), &[(1, 10_000_000_000)]);
+        assert_eq!(cur.utilisation_since(&prev, 1.0)[0].cpu.cpu_percent, 100.0);
+    }
+
+    #[test]
+    fn utilisation_is_sorted_and_capped() {
+        let base = Instant::now();
+        let count = MAX_ROWS as u32 + 50;
+        // Zero baseline so each PID's delta is its id: busier PIDs have higher ids.
+        let prev = totals(base, &(1..=count).map(|p| (p, 0)).collect::<Vec<_>>());
+        let cur = totals(
+            base + Duration::from_secs(1),
+            &(1..=count).map(|p| (p, p as u64)).collect::<Vec<_>>(),
+        );
+        let rows = cur.utilisation_since(&prev, 1.0);
+        assert_eq!(rows.len(), MAX_ROWS);
+        assert!(
+            rows.windows(2)
+                .all(|w| w[0].cpu.cpu_percent >= w[1].cpu.cpu_percent)
+        );
+        assert_eq!(rows[0].pid, count);
+    }
 }
