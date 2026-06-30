@@ -1,2 +1,4 @@
-[target."cfg(all())"]
-runner = "sudo -E"
+# eBPF needs root only at load time, so privileged runs go through `xtask`
+# rather than a global runner that would force `cargo test` under sudo too.
+[alias]
+xtask = "run --package xtask --"

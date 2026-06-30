@@ -5,6 +5,7 @@ members = [
     "truetop-common",
     "truetop-ebpf",
     "bench",
+    "xtask",
 ]
 default-members = ["truetop", "truetop-common", "bench"]
 

@@ -24,12 +24,27 @@ cargo install bpf-linker
 cargo build --release
 ```
 
-The build script compiles eBPF programs automatically. To invoke the eBPF
-build step explicitly:
+The build script compiles the eBPF programs automatically.
+
+## Run
+
+truetop loads eBPF programs, which needs root:
 
 ```sh
-cargo xtask build-ebpf
+cargo xtask run            # build and run, elevating with sudo
+# or run the built binary directly:
+sudo ./target/release/truetop
 ```
+
+## Tests
+
+```sh
+cargo test                 # unit tests — pure logic, no privileges
+cargo xtask test           # eBPF integration tests — needs root
+```
+
+The integration tests load the real programs on a live kernel, so they are
+`#[ignore]`d under `cargo test` and run only via `cargo xtask test`.
 
 ## Process names
 

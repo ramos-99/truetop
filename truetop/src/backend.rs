@@ -64,7 +64,7 @@ impl Collector {
         }
     }
 
-    fn tick(&mut self) -> SystemState {
+    pub fn tick(&mut self) -> SystemState {
         let fd = self.cpu_ns.fd().as_fd().as_raw_fd();
         let current = Totals {
             at: Some(Instant::now()),
