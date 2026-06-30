@@ -51,6 +51,9 @@ jobs:
 
       - run: cargo test --workspace --exclude truetop-ebpf
 
+      # The BTF parser against real kernel blobs (testdata/); pure, no kernel.
+      - run: cargo test -p truetop --features btf-fixtures
+
   run-integration-test:
     runs-on: ubuntu-latest
     steps:
