@@ -1,0 +1,112 @@
+name: truetop-ci
+
+on:
+  push:
+
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy,rustfmt,rust-src
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install bpf-linker --locked
+
+      - run: cargo +nightly fmt --all -- --check
+
+      - run: cargo clippy --workspace --exclude truetop-ebpf --all-targets -- -D warnings
+
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # nightly + rust-src builds the eBPF object; stable stays the default for
+      # the user-space crates.
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install bpf-linker --locked
+
+      - run: cargo test --workspace --exclude truetop-ebpf
+
+  run-integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install bpf-linker --locked
+
+      # ubuntu-latest is a real kernel with BTF and passwordless sudo, so the
+      # eBPF integration tests run here (one kernel; the VM matrix is later).
+      - run: cargo xtask test
+
+  cross-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - s390x-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install bpf-linker --locked
+
+      # User-space must compile for other arches and endianness (BTF parsing
+      # handles endianness at runtime; this catches layout/porting breaks).
+      # Check only — no cross linker needed.
+      - run: cargo check -p truetop --target ${{ matrix.target }}
+
+  check:
+    if: always()
+    needs:
+      - lint
+      - build-test
+      - run-integration-test
+      - cross-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
