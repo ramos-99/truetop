@@ -237,4 +237,55 @@ mod tests {
             let _ = Btf::from_bytes(data).and_then(|b| b.field_offset("task_struct", "pid"));
         }
     }
+
+    // Real kernel BTF from testdata/ (fetched via `cargo xtask update-btf-fixtures`):
+    // (file, task_struct::pid offset, task_struct::tgid offset). Offsets come from
+    // pahole — see testdata/PROVENANCE.md.
+    #[cfg(feature = "btf-fixtures")]
+    const REAL_WORLD: &[(&str, u32, u32)] = &[
+        ("ubuntu-x86_64.btf.tar.xz", 2264, 2268),
+        ("ubuntu-arm64.btf.tar.xz", 1336, 1340),
+        ("centos7-x86_64.btf.tar.xz", 1188, 1192),
+    ];
+
+    #[cfg(feature = "btf-fixtures")]
+    fn vmlinux_btf(file: &str) -> Vec<u8> {
+        let path = format!("{}/testdata/{file}", env!("CARGO_MANIFEST_DIR"));
+        let xz = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let mut reader = xz.as_slice();
+        let mut tar_bytes = Vec::new();
+        lzma_rs::xz_decompress(&mut reader, &mut tar_bytes).expect("xz decompress");
+        let mut archive = tar::Archive::new(tar_bytes.as_slice());
+        let mut entry = archive
+            .entries()
+            .expect("tar entries")
+            .next()
+            .expect("one tar entry")
+            .expect("tar entry");
+        let mut btf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut btf).expect("read btf");
+        btf
+    }
+
+    #[cfg(feature = "btf-fixtures")]
+    #[test]
+    fn resolves_real_world_offsets() {
+        assert!(
+            !REAL_WORLD.is_empty(),
+            "no fixtures pinned; run `cargo xtask update-btf-fixtures`"
+        );
+        for &(file, pid, tgid) in REAL_WORLD {
+            let btf = Btf::from_bytes(vmlinux_btf(file)).unwrap();
+            assert_eq!(
+                btf.field_offset("task_struct", "pid").unwrap(),
+                pid,
+                "{file} pid"
+            );
+            assert_eq!(
+                btf.field_offset("task_struct", "tgid").unwrap(),
+                tgid,
+                "{file} tgid"
+            );
+        }
+    }
 }

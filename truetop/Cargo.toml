@@ -26,6 +26,15 @@ ratatui = "0.30.2"
 crossterm = "0.29.0"
 arc-swap = "1.9.1"
 
+[features]
+# Verifies the BTF parser against real kernel blobs in testdata/; off by default
+# since the blobs must be fetched (`cargo xtask update-btf-fixtures`).
+btf-fixtures = []
+
+[dev-dependencies]
+lzma-rs = "0.3"
+tar = "0.4"
+
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }
