@@ -30,10 +30,7 @@ impl BatchReader {
         let mut totals = HashMap::new();
         let mut cursor = Cursor::default();
         while let Some(count) = self.next_batch(fd, &mut cursor) {
-            for i in 0..count {
-                let slots = &self.values[i * self.nr_cpus..(i + 1) * self.nr_cpus];
-                totals.insert(self.keys[i], slots.iter().sum());
-            }
+            fold(&self.keys, &self.values, count, self.nr_cpus, &mut totals);
             if count < BATCH {
                 break;
             }
@@ -60,6 +57,21 @@ impl BatchReader {
         // leaves `count` meaningless, so report exhaustion.
         let usable = ret == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT);
         (usable && attr.count > 0).then_some(attr.count as usize)
+    }
+}
+
+/// Sum each key's per-CPU slots into `totals`. `values` is row-major: `nr_cpus`
+/// contiguous slots per key; only the first `count` keys are live.
+fn fold(
+    keys: &[u32],
+    values: &[u64],
+    count: usize,
+    nr_cpus: usize,
+    totals: &mut HashMap<u32, u64>,
+) {
+    for i in 0..count {
+        let slots = &values[i * nr_cpus..(i + 1) * nr_cpus];
+        totals.insert(keys[i], slots.iter().sum());
     }
 }
 
@@ -109,5 +121,39 @@ impl BatchAttr {
             map_fd: fd as u32,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_sums_each_key_across_cpus() {
+        let mut totals = HashMap::new();
+        fold(&[10, 20], &[1, 2, 3, 4, 5, 6], 2, 3, &mut totals);
+        assert_eq!(totals, HashMap::from([(10, 6), (20, 15)]));
+    }
+
+    #[test]
+    fn fold_handles_a_single_cpu() {
+        let mut totals = HashMap::new();
+        fold(&[7], &[42], 1, 1, &mut totals);
+        assert_eq!(totals, HashMap::from([(7, 42)]));
+    }
+
+    #[test]
+    fn fold_ignores_entries_past_count() {
+        // Scratch buffers outlive a batch; slots beyond `count` are stale.
+        let mut totals = HashMap::new();
+        fold(&[1, 2, 99], &[10, 20, 7777], 2, 1, &mut totals);
+        assert_eq!(totals, HashMap::from([(1, 10), (2, 20)]));
+    }
+
+    #[test]
+    fn fold_of_an_empty_batch_is_empty() {
+        let mut totals = HashMap::new();
+        fold(&[0; 4], &[0; 4], 0, 1, &mut totals);
+        assert!(totals.is_empty());
     }
 }
