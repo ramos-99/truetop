@@ -1,4 +1,4 @@
-# truetop — Architecture Constraints
+# truetop - Architecture Constraints
 
 This file is the canonical source of architectural truth for this project.
 Every design decision below is **non-negotiable**. Do not deviate from these
@@ -23,10 +23,10 @@ constraints when generating or reviewing code.
 allocation overhead.
 
 **Targets**:
-- `sched_switch` — CPU utilization per PID
-- `rss_stat` — memory RSS per PID
-- `sched_process_exit` — PID lifecycle cleanup
-- `block_rq_issue` / `block_rq_complete` — block I/O latency
+- `sched_switch` - CPU utilization per PID
+- `rss_stat` - memory RSS per PID
+- `sched_process_exit` - PID lifecycle cleanup
+- `block_rq_issue` / `block_rq_complete` - block I/O latency
 
 **Memory primitives**: `PerCpuHashMap` and `PerCpuArray` exclusively. Global
 hash maps are **prohibited** to eliminate spinlock contention on hotpaths.
@@ -51,12 +51,12 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
   pre-allocated, reusable staging buffer.
 - **Collector thread (backend)**:
   - Wakes on 1000 ms interval.
-  - Mutates the pre-allocated staging buffer in-place — **no allocation per
+  - Mutates the pre-allocated staging buffer in-place - **no allocation per
     tick**.
   - Calls `bpf_map_lookup_batch` to pull all per-CPU data in a single syscall.
   - Computes deltas (current vs previous tick) and aggregates per-CPU values
     in user-space.
-  - Executes `ArcSwap::store()` — atomic pointer swap, nanosecond lock
+  - Executes `ArcSwap::store()` - atomic pointer swap, nanosecond lock
     duration. Drops previous snapshot.
 - **Renderer thread (frontend)**:
   - Event-driven via `crossterm::event::poll`.
@@ -84,17 +84,17 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
 
 ## 5. Implementation Phases (v0.1.0)
 
-**Phase 1 — procfs parity baseline**:
+**Phase 1 - procfs parity baseline**:
 - Implement CPU utilization via `sched_switch` and memory tracking via
   `rss_stat`.
 - Validate that eBPF O(1) per-event cost is lower than btop's O(N) procfs
   text parsing under high PID load.
 - Public release only after parity is confirmed under stress.
 
-**Phase 2 — killer feature (block I/O latency per PID)**:
+**Phase 2 - killer feature (block I/O latency per PID)**:
 - Hook `block_rq_issue` and `block_rq_complete`.
-- Correlation uses an intermediate BPF map keyed by `(dev, sector)` — stored
-  on issue, looked up and deleted on complete — to compute per-request latency.
+- Correlation uses an intermediate BPF map keyed by `(dev, sector)` - stored
+  on issue, looked up and deleted on complete - to compute per-request latency.
 - User-space renders real-time latency histograms per PID.
 - This metric is structurally impossible to extract from `/proc/diskstats`,
   which only provides aggregate throughput.
@@ -104,10 +104,12 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
 ## 6. Overhead Disclosure
 
 `sched_switch` fires on every context switch. On busy systems this can reach
-hundreds of thousands of events per second. The per-event cost is
-nanosecond-level O(1) kernel execution, which is lower than procfs text
-parsing at scale, but is **not zero**. The README must document this
-trade-off explicitly to avoid claims that will be challenged and disproven.
+hundreds of thousands of events per second. The per-event cost is O(1) and
+low-microsecond - measured at ~1.6 µs under a `hackbench` context-switch storm
+(hotpath benchmark), not assumed - so total overhead scales with the
+context-switch rate, not the process count: ~8% under that storm, well under 1%
+in normal use, but **not zero**. The README must document this trade-off
+explicitly to avoid claims that will be challenged and disproven.
 
 ---
 

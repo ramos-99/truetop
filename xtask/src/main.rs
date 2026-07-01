@@ -4,8 +4,10 @@
 //!
 //!   cargo xtask run [args...]         build truetop and run it as root
 //!   cargo xtask test                  run the eBPF integration tests as root
+//!   cargo xtask bench [names...]      run the benchmarks (all, or a subset)
 //!   cargo xtask update-btf-fixtures   refresh the BTF test fixtures
 
+mod bench;
 mod btf_fixtures;
 mod runner;
 
@@ -16,7 +18,8 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("run") => runner::run(&args[1..]),
         Some("test") => runner::test(),
+        Some("bench") => bench::bench(&args[1..]),
         Some("update-btf-fixtures") => btf_fixtures::update(),
-        _ => bail!("usage: cargo xtask <run | test | update-btf-fixtures> [args...]"),
+        _ => bail!("usage: cargo xtask <run | test | bench | update-btf-fixtures> [args...]"),
     }
 }

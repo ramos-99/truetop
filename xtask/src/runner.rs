@@ -1,4 +1,4 @@
-//! Build truetop's artifacts and run them under sudo — eBPF needs root at load.
+//! Build truetop's artifacts and run them under sudo - eBPF needs root at load.
 
 use std::process::{Command, Stdio};
 
@@ -80,6 +80,6 @@ fn sudo(bin: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-fn cargo() -> String {
+pub(crate) fn cargo() -> String {
     std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())
 }

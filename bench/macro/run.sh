@@ -13,7 +13,9 @@ DURATION=20
 TICKS=15            # truetop headless collector ticks
 LOAD=../../target/release/load
 TRUETOP=../../target/release/truetop
-OUT=results.csv
+RESULTS="$(cd "$(dirname "$0")/.." && pwd)/results"
+mkdir -p "$RESULTS"
+OUT="$RESULTS/macro.csv"
 
 for c in strace script top htop; do
     command -v "$c" >/dev/null || { echo "missing dependency: $c" >&2; exit 1; }
@@ -38,7 +40,7 @@ record() {
 
 # Per-process data reads (-y resolves fds to /proc paths, so cached fds count
 # too) plus bpf, divided by refreshes (procfs tools reopen /proc per scan;
-# truetop issues one batch per tick) — refresh-rate independent.
+# truetop issues one batch per tick) - refresh-rate independent.
 per_refresh() {
     local log=$1 refresh_re=$2 reads refreshes
     reads=$(grep -cE '(read|pread64)\([0-9]+</proc/[0-9]+/(stat|statm|status|cmdline)|\bbpf\(' \
@@ -59,7 +61,7 @@ for n in "${COUNTS[@]}"; do
     record "$log" top -b && echo "top,$procs,$(per_refresh "$log" '"/proc", O_')" >> "$OUT"
     record "$log" htop && echo "htop,$procs,$(per_refresh "$log" '"/proc", O_')" >> "$OUT"
 
-    # truetop is headless here, so the tick count is known — divide by it
+    # truetop is headless here, so the tick count is known - divide by it
     # directly instead of grepping a per-scan marker.
     record "$log" "$TRUETOP" --bench "$TICKS"
     reads=$(grep -cE '(read|pread64)\([0-9]+</proc/[0-9]+/(stat|statm|status|cmdline)|\bbpf\(' \

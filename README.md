@@ -3,8 +3,19 @@
 Per-process Linux monitor built on eBPF raw tracepoints. CPU time and process
 identity are collected entirely in-kernel (O(1) hotpaths). Memory (RSS) is the
 one metric eBPF cannot read accurately on current kernels, so it falls back to
-`/proc` — strictly for lack of an alternative, until the kernel exposes a usable
-eBPF interface for it (see Memory). Block I/O latency per PID is planned.
+`/proc` until the kernel exposes a usable interface (see Memory). Block I/O
+latency per PID is planned.
+
+## Benchmarks
+
+truetop collects per-process CPU with O(1) syscalls per refresh, regardless of
+process count. top and htop read one `/proc/<pid>` file per process, so their cost
+grows linearly; truetop batch-reads a single kernel map. At 5,365 processes it
+stays flat at ~780 syscalls per refresh against htop's ~11,959. The price is an
+O(1) eBPF program on every context switch (see Overhead). Reproduce it all with
+`cargo xtask bench`.
+
+[![Read the benchmarks](https://img.shields.io/badge/read_the_benchmarks-method_%C2%B7_results_%C2%B7_kernel_cost-8250DF?style=for-the-badge)](bench/BENCHMARKS.md)
 
 ## Requirements
 
@@ -39,8 +50,8 @@ sudo ./target/release/truetop
 ## Tests
 
 ```sh
-cargo test                 # unit tests — pure logic, no privileges
-cargo xtask test           # eBPF integration tests — needs root
+cargo test                 # unit tests: pure logic, no privileges
+cargo xtask test           # eBPF integration tests: need root
 ```
 
 The integration tests load the real programs on a live kernel, so they are
@@ -51,7 +62,7 @@ The integration tests load the real programs on a live kernel, so they are
 Process identity (`comm`) is captured in-kernel on `sched_process_exec`, so
 names of processes started while truetop runs cost nothing on the hotpath.
 Processes that already existed at startup predate any event we can hook, so
-their names are seeded **once from `/proc` at launch** — the only `/proc` access
+their names are seeded **once from `/proc` at launch**, the only `/proc` access
 in the tool. This startup backfill is planned to move to a `bpf_iter` task walk,
 making truetop fully `/proc`-independent.
 
@@ -64,38 +75,24 @@ process count.
 This is a fallback for lack of options, not a design preference. Since Linux 6.2
 a process's RSS lives in a `percpu_counter`: the true value (what `top` shows) is
 the global count plus the unflushed per-CPU deltas. Summing those from eBPF would
-require walking `__percpu` pointers per online CPU — fragile, arch-specific, and
-high-overhead — while the global count alone drifts from `top` by megabytes on
-busy multi-threaded processes. No eBPF interface currently exposes the accurate
-per-process value, so `/proc` is the only correct source today.
+require walking `__percpu` pointers per online CPU, which is fragile,
+arch-specific, and high-overhead, while the global count alone drifts from `top`
+by megabytes on busy multi-threaded processes. No eBPF interface currently exposes
+the accurate per-process value, so `/proc` is the only correct source today.
 
-**When the kernel provides a usable interface** — a BPF helper or a stable
-tracepoint carrying the summed value — **memory will move to eBPF like the rest.**
+**When the kernel provides a usable interface** (a BPF helper or a stable
+tracepoint carrying the summed value), **memory will move to eBPF like the rest.**
 Until then this is the one metric not collected in-kernel.
 
 ## Overhead
 
-`sched_switch` fires on every context switch. Per-event cost is O(1) and
-nanosecond-level, but not zero. Benchmark on latency-sensitive hosts before
-deploying.
-
-## Benchmarks
-
-Per-process CPU extraction is O(1) in syscalls (one `BPF_MAP_LOOKUP_BATCH`) vs
-procfs's O(N) — both O(N) in time, but a ~3500x constant-factor win by skipping
-the per-process VFS read.
-
-Two benchmarks, measuring two things: a micro benchmark isolates the per-process
-*work* (eBPF ~4 ns vs procfs ~14 µs, modelled in memory — no `bpf()` call), and
-a macro benchmark counts the real *syscalls* per refresh with `strace` against
-top and htop. truetop issues fewer at every point measured (380–5382 processes)
-and stays flat while procfs scales linearly — ~12-15x fewer at 5k.
-
-btop is excluded from the macro run because its TUI defeats `strace` the same way
-truetop's does, not because it would scale differently: it reads `/proc/<pid>`
-per process, the same O(N) procfs class as htop.
-
-See [bench/BENCHMARKS.md](bench/BENCHMARKS.md) (`cargo bench -p truetop-bench`).
+`sched_switch` fires on every context switch, so truetop's cost scales with the
+context-switch rate, not the process count. Under `hackbench` (a context-switch
+storm) it adds ~8% wall-clock on the reference machine, at low-microsecond cost
+per switch; a normal system does orders of magnitude fewer switches and pays
+proportionally less, well under 1%. The per-event cost is O(1) but not zero, so
+benchmark on latency-sensitive hosts before deploying. See the hotpath benchmark
+in [bench/BENCHMARKS.md](bench/BENCHMARKS.md).
 
 ## License
 

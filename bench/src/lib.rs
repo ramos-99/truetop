@@ -1,18 +1,22 @@
-//! Collection-cost models for the `scaling` benchmark — see BENCHMARKS.md.
+//! Collection-cost models for the `scaling` benchmark - see BENCHMARKS.md.
+
+use std::collections::HashMap;
 
 /// Per-CPU on-CPU nanosecond slots for one pid, as a batched map read yields it.
 pub type PerCpuSample = Vec<u64>;
 
-/// eBPF path: sum the per-CPU slots already pulled in one batched read — zero
-/// per-process syscalls.
-pub fn collect_batched(samples: &[(u32, PerCpuSample)]) -> u64 {
-    samples
-        .iter()
-        .map(|(_pid, per_cpu)| per_cpu.iter().sum::<u64>())
-        .sum()
+/// eBPF path: fold the per-CPU slots into the `tgid → ns` map - no per-process
+/// syscall. Mirrors the real `batch::fold` (sum plus hash insert), so the cost
+/// is the collector's actual per-process work, not a bare summation.
+pub fn collect_batched(samples: &[(u32, PerCpuSample)]) -> HashMap<u32, u64> {
+    let mut totals = HashMap::new();
+    for (pid, per_cpu) in samples {
+        totals.insert(*pid, per_cpu.iter().sum());
+    }
+    totals
 }
 
-/// procfs path: read and parse one `/proc/<pid>/stat` per process — O(N) syscalls.
+/// procfs path: read and parse one `/proc/<pid>/stat` per process - O(N) syscalls.
 pub fn collect_procfs(count: usize) -> u64 {
     (0..count).map(|_| read_self_cpu_ns()).sum()
 }

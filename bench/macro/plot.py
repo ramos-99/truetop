@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Plot per-process data syscalls per refresh vs process count (results.csv)."""
+"""Plot per-process data syscalls per refresh vs process count (macro.csv)."""
 
 import csv
-import os
 from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-# Read/write next to this script, regardless of the caller's working directory.
-os.chdir(Path(__file__).resolve().parent)
+# All benchmark outputs live in bench/results/, regardless of the caller's cwd.
+RESULTS = Path(__file__).resolve().parent.parent / "results"
 
 series = defaultdict(list)
-with open("results.csv") as f:
+with open(RESULTS / "macro.csv") as f:
     for row in csv.DictReader(f):
         series[row["tool"]].append(
             (int(row["procs"]), int(row["syscalls_per_refresh"]))
@@ -35,5 +34,6 @@ ax.set(
 ax.grid(True, which="both", linestyle=":", alpha=0.4)
 ax.legend()
 fig.tight_layout()
-fig.savefig("scaling.svg")
-print("wrote scaling.svg")
+out = RESULTS / "scaling.svg"
+fig.savefig(out)
+print(f"wrote {out}")
