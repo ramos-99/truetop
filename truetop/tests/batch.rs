@@ -58,7 +58,7 @@ fn create_percpu_hash() -> Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(fd as i32) })
 }
 
-/// `per_cpu` must hold one value per *possible* CPU — the layout the kernel reads
+/// `per_cpu` must hold one value per *possible* CPU - the layout the kernel reads
 /// for a per-CPU map update.
 fn update_percpu(map: &OwnedFd, key: u32, per_cpu: &[u64]) -> Result<()> {
     let mut attr = MapElemAttr {

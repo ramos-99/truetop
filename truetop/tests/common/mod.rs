@@ -1,4 +1,4 @@
-//! Shared harness for the eBPF integration tests — they need root and a live
+//! Shared harness for the eBPF integration tests - they need root and a live
 //! kernel, so are `#[ignore]`d. Run with `cargo xtask test`.
 
 use std::process::{Child, Command};

@@ -4,7 +4,7 @@
 //! This is our portable stand-in for libbpf CO-RE field relocations, which the
 //! Rust eBPF toolchain doesn't emit. The offset is read from the live kernel
 //! and injected into the program at load (see `main`), so one binary adapts to
-//! any kernel version/arch — each machine ships the BTF for its own layout.
+//! any kernel version/arch - each machine ships the BTF for its own layout.
 
 use anyhow::{Context as _, Result, bail};
 
@@ -68,7 +68,7 @@ impl Btf {
         Ok(btf)
     }
 
-    /// Read a `u32`, or `None` past the buffer — every read is bounds-checked
+    /// Read a `u32`, or `None` past the buffer - every read is bounds-checked
     /// because the section bounds come from an untrusted header.
     fn u32(&self, at: usize) -> Option<u32> {
         let b = self.data.get(at..at + 4)?;
@@ -240,7 +240,7 @@ mod tests {
 
     // Real kernel BTF from testdata/ (fetched via `cargo xtask update-btf-fixtures`):
     // (file, task_struct::pid offset, task_struct::tgid offset). Offsets come from
-    // pahole — see testdata/PROVENANCE.md.
+    // pahole - see testdata/PROVENANCE.md.
     #[cfg(feature = "btf-fixtures")]
     const REAL_WORLD: &[(&str, u32, u32)] = &[
         ("ubuntu-x86_64.btf.tar.xz", 2264, 2268),

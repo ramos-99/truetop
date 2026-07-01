@@ -3,7 +3,7 @@
 //!
 //! Time is charged per thread but accumulated per process: each thread keeps
 //! its own schedule-in stopwatch (`START_TIME`, keyed by tid), and its slice is
-//! added to the process total (`CPU_NS`, keyed by tgid) — matching top/btop.
+//! added to the process total (`CPU_NS`, keyed by tgid) - matching top/btop.
 
 use aya_ebpf::{
     helpers::bpf_ktime_get_ns,

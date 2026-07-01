@@ -98,7 +98,7 @@ jobs:
 
       # User-space must compile for other arches and endianness (BTF parsing
       # handles endianness at runtime; this catches layout/porting breaks).
-      # Check only — no cross linker needed.
+      # Check only - no cross linker needed.
       - run: cargo check -p truetop --target ${{ matrix.target }}
 
   check:

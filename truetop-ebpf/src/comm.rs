@@ -4,7 +4,7 @@
 //!
 //! This map is intentionally a global `HashMap`, not per-CPU: the §2 per-CPU
 //! rule targets hotpath spinlock contention, which a cold-path write does not
-//! incur, and a per-process name is not per-CPU data — only the core that ran
+//! incur, and a per-process name is not per-CPU data - only the core that ran
 //! the `exec` would hold a per-CPU copy.
 
 use aya_ebpf::{

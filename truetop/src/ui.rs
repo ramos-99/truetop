@@ -36,7 +36,7 @@ const FRAME_BUDGET: Duration = Duration::from_millis(16);
 /// Accent colour for the frame and header.
 const ACCENT: Color = Color::Cyan;
 
-/// Table columns as `(title, width, alignment)` — one source of truth for the
+/// Table columns as `(title, width, alignment)` - one source of truth for the
 /// header and the row layout. [`process_row`] emits cells in this order.
 const COLUMNS: [(&str, Constraint, Alignment); 4] = [
     ("PID", Constraint::Length(7), Alignment::Right),
@@ -150,7 +150,7 @@ fn cpu_style(percent: f64) -> Style {
 
 fn mem_text(p: &ProcessMetrics) -> String {
     p.mem
-        .map_or_else(|| "—".to_owned(), |m| format_bytes(m.rss_bytes))
+        .map_or_else(|| "-".to_owned(), |m| format_bytes(m.rss_bytes))
 }
 
 fn mem_style(p: &ProcessMetrics) -> Style {

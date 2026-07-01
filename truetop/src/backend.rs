@@ -1,4 +1,4 @@
-//! Collector (backend) — producer side of the double-buffer (CLAUDE.md §3).
+//! Collector (backend) - producer side of the double-buffer (CLAUDE.md §3).
 //! Pulls the eBPF CPU counters at 1 Hz via one batched map read, derives
 //! per-interval CPU%, resolves names and RSS, and publishes an immutable
 //! snapshot via an atomic pointer swap.
@@ -6,7 +6,7 @@
 //! Names use the event-driven identity model: the kernel captures `comm` on
 //! `exec` into `COMM_MAP`; a one-time `/proc` snapshot seeds processes that
 //! predate truetop. RSS is read from `/proc/<pid>/statm` for the visible rows
-//! only — since Linux 6.2 the exact value cannot be summed from eBPF cheaply
+//! only - since Linux 6.2 the exact value cannot be summed from eBPF cheaply
 //! (see README), so we read the same source `top` does, at negligible cost.
 
 use std::{
@@ -164,7 +164,7 @@ impl Totals {
     }
 }
 
-/// Resident-set pages from a `/proc/<pid>/statm` line — the second whitespace
+/// Resident-set pages from a `/proc/<pid>/statm` line - the second whitespace
 /// field. `None` if the line is empty or malformed.
 fn parse_statm_pages(statm: &str) -> Option<u64> {
     statm.split_whitespace().nth(1)?.parse().ok()

@@ -1,4 +1,4 @@
-//! truetop — eBPF-backed per-process CPU/memory collection.
+//! truetop - eBPF-backed per-process CPU/memory collection.
 //!
 //! The eBPF program reads `task_struct` fields through offsets resolved at
 //! runtime against the live kernel BTF and injected as globals (`btf`), so one
@@ -65,7 +65,7 @@ fn raise_memlock() {
 }
 
 /// Load the eBPF, attach the tracepoints, and build the collector. The returned
-/// [`aya::Ebpf`] owns the tracepoint links — keep it alive for the collector's
+/// [`aya::Ebpf`] owns the tracepoint links - keep it alive for the collector's
 /// lifetime.
 pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
     let mut ebpf = load_ebpf()?;
@@ -74,11 +74,11 @@ pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
 }
 
 /// Load the eBPF object, resolving task_struct field offsets from the live
-/// kernel BTF and injecting them as globals — our portable CO-RE (see `btf`).
+/// kernel BTF and injecting them as globals - our portable CO-RE (see `btf`).
 fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
     let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
     let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
-    log::info!("CO-RE offsets — pid: {pid}, tgid: {tgid}");
+    log::info!("CO-RE offsets - pid: {pid}, tgid: {tgid}");
 
     EbpfLoader::new()
         .override_global("PID_OFFSET", &pid, true)
@@ -91,7 +91,7 @@ fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
 }
 
 /// Attach the tracepoints and build a [`Collector`] over the CPU and comm maps.
-/// `ebpf` must outlive the collector — it owns the tracepoint links.
+/// `ebpf` must outlive the collector - it owns the tracepoint links.
 fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
     for tp in ["sched_switch", "sched_process_exec", "sched_process_exit"] {
         attach_raw_tracepoint(ebpf, tp)?;
@@ -111,7 +111,7 @@ fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
 }
 
 /// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a
-/// SIGINT/SIGTERM listener — until the user quits.
+/// SIGINT/SIGTERM listener - until the user quits.
 async fn run_ui(collector: Collector) -> anyhow::Result<()> {
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
     let running = Arc::new(AtomicBool::new(true));

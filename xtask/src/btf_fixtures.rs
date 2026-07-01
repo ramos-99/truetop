@@ -1,6 +1,6 @@
 //! Refresh the verbatim BTF fixtures used by `btf::tests` from BTFHub. Pin each
 //! to a commit and record its sha256; see truetop/testdata/PROVENANCE.md. Leave
-//! the sha empty for a first fetch — it is printed for you to record.
+//! the sha empty for a first fetch - it is printed for you to record.
 
 use std::path::Path;
 

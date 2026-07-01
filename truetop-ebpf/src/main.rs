@@ -1,12 +1,12 @@
-//! truetop kernel-space programs — one BPF object, split by concern so new
+//! truetop kernel-space programs - one BPF object, split by concern so new
 //! hooks slot in without ever touching the hotpath:
 //!
-//! - [`task`]      — shared CO-RE task introspection (injected pid/tgid offsets),
-//! - [`cpu`]       — CPU time via `sched_switch` (the hotpath),
-//! - [`comm`]      — process identity via `sched_process_exec` (cold path),
-//! - [`lifecycle`] — `sched_process_exit` cleanup fanned out to each subsystem.
+//! - [`task`]      - shared CO-RE task introspection (injected pid/tgid offsets),
+//! - [`cpu`]       - CPU time via `sched_switch` (the hotpath),
+//! - [`comm`]      - process identity via `sched_process_exec` (cold path),
+//! - [`lifecycle`] - `sched_process_exit` cleanup fanned out to each subsystem.
 //!
-//! Memory is deliberately *not* here — see `truetop`'s collector and the README:
+//! Memory is deliberately *not* here - see `truetop`'s collector and the README:
 //! since Linux 6.2 RSS lives in a `percpu_counter` whose exact value can't be
 //! summed from eBPF cheaply, so it is read from `/proc` in user space.
 
