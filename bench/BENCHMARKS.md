@@ -194,13 +194,13 @@ truetop attached, so the per-event figure has a wall-clock number behind it.
 | per-event ns | `run_time_ns / run_cnt` for `sched_switch`          |
 | overhead %   | `hackbench` wall-clock, without versus with truetop |
 
-On the reference machine (AMD Ryzen 7 5800HS, 16 cores), under `hackbench`,
-truetop adds **+8.3%** wall-clock (4.41s to 4.77s) at **~1.6 µs per context
-switch** over 12M events. The two numbers agree: 1.6 µs times 12M events is ~20
-CPU-seconds of program time, which over the ~14s window across 16 cores is ~8.5%,
-matching the wall-clock delta. So the per-event figure is a real cost, not a
-`bpf_stats` artefact, and it includes the cache-cold `task_struct` reads a
-context-switch storm forces.
+On the reference machine (AMD Ryzen 7 5800HS, 16 cores, turbo off), under
+`hackbench`, truetop adds **+15.0%** wall-clock (3.948s to 4.539s) at **~1.54 µs
+per context switch** (`run_time_ns / run_cnt`) over ~12M events. These are two
+independent measurements of the same cost - one from `bpf_stats`, one from
+wall-clock timing - so the per-event figure is a real cost, not a `bpf_stats`
+artefact, and it includes the cache-cold `task_struct` reads a context-switch
+storm forces (the CPU and I/O-wait metrics share this hook).
 
 This is a worst case. hackbench drives roughly 800k context switches per second
 across the machine; truetop's overhead scales with that rate, not with process

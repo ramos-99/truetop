@@ -89,7 +89,7 @@ Until then this is the one metric not collected in-kernel.
 
 `sched_switch` fires on every context switch, so truetop's cost scales with the
 context-switch rate, not the process count. Under `hackbench` (a context-switch
-storm) it adds ~8% wall-clock on the reference machine, at low-microsecond cost
+storm) it adds ~15% wall-clock on the reference machine, at low-microsecond cost
 per switch; a normal system does orders of magnitude fewer switches and pays
 proportionally less, well under 1%. The per-event cost is O(1) but not zero, so
 benchmark on latency-sensitive hosts before deploying. See the hotpath benchmark
