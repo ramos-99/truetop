@@ -46,3 +46,6 @@ __pycache__/
 
 # Local working notes
 /TODO.md
+
+# Integration-test scratch (removed by the test's guard; kept out if killed)
+truetop/iowait-scratch.tmp

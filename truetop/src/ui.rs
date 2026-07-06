@@ -38,9 +38,10 @@ const ACCENT: Color = Color::Cyan;
 
 /// Table columns as `(title, width, alignment)` - one source of truth for the
 /// header and the row layout. [`process_row`] emits cells in this order.
-const COLUMNS: [(&str, Constraint, Alignment); 4] = [
+const COLUMNS: [(&str, Constraint, Alignment); 5] = [
     ("PID", Constraint::Length(7), Alignment::Right),
     ("CPU%", Constraint::Length(6), Alignment::Right),
+    ("IO%", Constraint::Length(6), Alignment::Right),
     ("MEM", Constraint::Length(9), Alignment::Right),
     ("COMMAND", Constraint::Fill(1), Alignment::Left),
 ];
@@ -117,7 +118,7 @@ fn header_cell(title: &'static str, align: Alignment) -> Cell<'static> {
 /// One process → one table row, in [`COLUMNS`] order. Formatting and styling are
 /// lazy here, only for drawn rows (renderer contract, CLAUDE.md §3).
 fn process_row(p: &ProcessMetrics) -> Row<'static> {
-    let [pid, cpu, mem, cmd] = COLUMNS.map(|(_, _, align)| align);
+    let [pid, cpu, io, mem, cmd] = COLUMNS.map(|(_, _, align)| align);
     Row::new([
         cell(p.pid.to_string(), pid, Style::new().dim()),
         cell(
@@ -125,6 +126,7 @@ fn process_row(p: &ProcessMetrics) -> Row<'static> {
             cpu,
             cpu_style(p.cpu.cpu_percent),
         ),
+        cell(io_text(p), io, io_style(p)),
         cell(mem_text(p), mem, mem_style(p)),
         cell(p.name.clone(), cmd, Style::new()),
     ])
@@ -146,6 +148,17 @@ fn cpu_style(percent: f64) -> Style {
         Color::Red
     };
     Style::new().fg(colour)
+}
+
+fn io_text(p: &ProcessMetrics) -> String {
+    p.io.map_or_else(|| "-".to_owned(), |io| format!("{:.1}", io.io_wait_percent))
+}
+
+fn io_style(p: &ProcessMetrics) -> Style {
+    match p.io {
+        Some(io) => cpu_style(io.io_wait_percent),
+        None => Style::new().dim(),
+    }
 }
 
 fn mem_text(p: &ProcessMetrics) -> String {

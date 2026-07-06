@@ -78,16 +78,31 @@ pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
 fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
     let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
     let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
-    log::info!("CO-RE offsets - pid: {pid}, tgid: {tgid}");
+    let state = state_offset()?;
+    log::info!("CO-RE offsets - pid: {pid}, tgid: {tgid}, state: {state}");
 
     EbpfLoader::new()
         .override_global("PID_OFFSET", &pid, true)
         .override_global("TGID_OFFSET", &tgid, true)
+        .override_global("STATE_OFFSET", &state, true)
         .load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/truetop"
         )))
         .context("loading eBPF object")
+}
+
+/// Offset of the run state: `__state` (u32) since 5.14, previously `state` - a
+/// native long, whose meaningful low word sits in the second half on 64-bit
+/// big-endian.
+fn state_offset() -> anyhow::Result<u32> {
+    if let Ok(offset) = btf::field_byte_offset("task_struct", "__state") {
+        return Ok(offset);
+    }
+    let offset =
+        btf::field_byte_offset("task_struct", "state").context("BTF: task_struct::state")?;
+    let wide_be = cfg!(target_endian = "big") && cfg!(target_pointer_width = "64");
+    Ok(offset + if wide_be { 4 } else { 0 })
 }
 
 /// Attach the tracepoints and build a [`Collector`] over the CPU and comm maps.
@@ -97,17 +112,25 @@ fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
         attach_raw_tracepoint(ebpf, tp)?;
     }
 
-    // CPU_NS stays raw MapData so the collector can do BPF_MAP_LOOKUP_BATCH (aya
-    // exposes no batch API; see `batch`).
-    let Map::PerCpuHashMap(cpu_ns) = ebpf.take_map("CPU_NS").context("CPU_NS map not found")?
-    else {
-        anyhow::bail!("CPU_NS is not a per-CPU hash map");
-    };
+    // Counter maps stay raw MapData so the collector can do
+    // BPF_MAP_LOOKUP_BATCH (aya exposes no batch API; see `batch`).
+    let cpu_ns = take_percpu_map(ebpf, "CPU_NS")?;
+    let iowait_ns = take_percpu_map(ebpf, "IOWAIT_NS")?;
     let comm: HashMap<_, u32, [u8; COMM_LEN]> =
         HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
     let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
 
-    Ok(Collector::new(cpu_ns, comm, ncpus))
+    Ok(Collector::new(cpu_ns, iowait_ns, comm, ncpus))
+}
+
+fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {
+    let Map::PerCpuHashMap(map) = ebpf
+        .take_map(name)
+        .with_context(|| format!("{name} map not found"))?
+    else {
+        anyhow::bail!("{name} is not a per-CPU hash map");
+    };
+    Ok(map)
 }
 
 /// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a

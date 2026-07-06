@@ -8,6 +8,8 @@ use aya_ebpf::{Global, helpers::bpf_probe_read_kernel, programs::RawTracePointCo
 static PID_OFFSET: Global<u32> = Global::new(0);
 #[unsafe(no_mangle)]
 static TGID_OFFSET: Global<u32> = Global::new(0);
+#[unsafe(no_mangle)]
+static STATE_OFFSET: Global<u32> = Global::new(0);
 
 /// A scheduler `task_struct` pointer taken from a tracepoint argument.
 pub struct Task(*const u8);
@@ -28,6 +30,13 @@ impl Task {
     #[inline(always)]
     pub fn tgid(&self) -> u32 {
         self.read_u32(TGID_OFFSET.load())
+    }
+
+    /// The scheduler run state (`__state`; `state` before 5.14 — user space
+    /// points the offset at the meaningful word either way).
+    #[inline(always)]
+    pub fn state(&self) -> u32 {
+        self.read_u32(STATE_OFFSET.load())
     }
 
     /// Probe-read a `pid_t`-sized field at `offset`; 0 on a null task or fault.

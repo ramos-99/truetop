@@ -1,8 +1,10 @@
 //! truetop kernel-space programs - one BPF object, split by concern so new
 //! hooks slot in without ever touching the hotpath:
 //!
-//! - [`task`]      - shared CO-RE task introspection (injected pid/tgid offsets),
-//! - [`cpu`]       - CPU time via `sched_switch` (the hotpath),
+//! - [`task`]      - shared CO-RE task introspection (injected field offsets),
+//! - [`sched`]     - the `sched_switch` hotpath, fanned out to each metric,
+//! - [`cpu`]       - on-CPU time accounting,
+//! - [`iowait`]    - uninterruptible (D-state) sleep accounting,
 //! - [`comm`]      - process identity via `sched_process_exec` (cold path),
 //! - [`lifecycle`] - `sched_process_exit` cleanup fanned out to each subsystem.
 //!
@@ -15,7 +17,9 @@
 
 mod comm;
 mod cpu;
+mod iowait;
 mod lifecycle;
+mod sched;
 mod task;
 
 #[cfg(not(test))]

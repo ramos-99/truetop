@@ -4,7 +4,7 @@
 
 use aya_ebpf::{macros::raw_tracepoint, programs::RawTracePointContext};
 
-use crate::{comm, cpu, task::Task};
+use crate::{comm, cpu, iowait, task::Task};
 
 #[raw_tracepoint(tracepoint = "sched_process_exit")]
 pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
@@ -16,6 +16,7 @@ pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
     }
     let tgid = task.tgid();
     cpu::forget(tid, tgid);
+    iowait::forget(tid, tgid);
     comm::forget(tid, tgid);
     0
 }

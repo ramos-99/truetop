@@ -1,10 +1,11 @@
 # truetop
 
-Per-process Linux monitor built on eBPF raw tracepoints. CPU time and process
-identity are collected entirely in-kernel (O(1) hotpaths). Memory (RSS) is the
-one metric eBPF cannot read accurately on current kernels, so it falls back to
-`/proc` until the kernel exposes a usable interface (see Memory). Block I/O
-latency per PID is planned.
+Per-process Linux monitor built on eBPF raw tracepoints. CPU time, I/O wait
+(D-state time: which process is stuck on the disk, a column no procfs tool
+shows), and process identity are collected entirely in-kernel (O(1) hotpaths).
+Memory (RSS) is the one metric eBPF cannot read accurately on current kernels,
+so it falls back to `/proc` until the kernel exposes a usable interface (see
+Memory). Block-device latency per PID is planned.
 
 ## Benchmarks
 

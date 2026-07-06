@@ -16,6 +16,7 @@ pub(crate) use cpu::CpuCollector;
 pub use cpu::CpuMetrics;
 pub(crate) use identity::Resolver;
 pub use iowait::IoMetrics;
+pub(crate) use iowait::IoWaitCollector;
 pub use mem::MemMetrics;
 pub(crate) use mem::MemReader;
 

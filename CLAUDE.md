@@ -11,7 +11,7 @@ constraints when generating or reviewing code.
 - **Kernel-space**: eBPF compiled to BPF bytecode
 - **User-space**: Rust (2024 edition)
 - **Frameworks**: `aya` + `aya-bpf`, `ratatui` + `crossterm`, `arc-swap`
-- **Minimum kernel**: Linux ≥ 5.10 (hard requirement for `rss_stat`)
+- **Minimum kernel**: Linux ≥ 5.10 (BTF + raw tracepoints)
 - **CO-RE requirement**: `CONFIG_DEBUG_INFO_BTF=y`. Boot aborts gracefully if
   `/sys/kernel/btf/vmlinux` is missing.
 
@@ -23,13 +23,20 @@ constraints when generating or reviewing code.
 allocation overhead.
 
 **Targets**:
-- `sched_switch` - CPU utilization per PID
-- `rss_stat` - memory RSS per PID
+- `sched_switch` - CPU utilization and D-state I/O wait per PID (one program,
+  fanned out per metric)
+- `sched_process_exec` - process identity (`comm`) capture
 - `sched_process_exit` - PID lifecycle cleanup
-- `block_rq_issue` / `block_rq_complete` - block I/O latency
+- `block_rq_issue` / `block_rq_complete` - block I/O device latency (Phase 2b)
 
-**Memory primitives**: `PerCpuHashMap` and `PerCpuArray` exclusively. Global
-hash maps are **prohibited** to eliminate spinlock contention on hotpaths.
+Memory (RSS) is read from `/proc` in user space: since Linux 6.2 it lives in a
+`percpu_counter` that eBPF cannot sum exactly (see README).
+
+**Memory primitives**: `PerCpuHashMap` and `PerCpuArray` for hotpath
+accumulators. Global hash maps are allowed only where per-CPU storage cannot
+express the data, with the rationale documented in the module: `COMM_MAP`
+(cold exec-path writes) and `SLEEP_SINCE` (a D-sleep interval spans CPUs;
+lock-free RCU lookups on the hotpath, locked updates only on D transitions).
 
 **PID cleanup**: `sched_process_exit` hook calls `bpf_map_delete_elem()`
 immediately on process termination. No stale entries accumulate.
@@ -91,13 +98,21 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
   text parsing under high PID load.
 - Public release only after parity is confirmed under stress.
 
-**Phase 2 - killer feature (block I/O latency per PID)**:
-- Hook `block_rq_issue` and `block_rq_complete`.
-- Correlation uses an intermediate BPF map keyed by `(dev, sector)` - stored
-  on issue, looked up and deleted on complete - to compute per-request latency.
-- User-space renders real-time latency histograms per PID.
-- This metric is structurally impossible to extract from `/proc/diskstats`,
-  which only provides aggregate throughput.
+**Phase 2 - killer feature (per-PID I/O wait)**:
+- Primary metric: time blocked in uninterruptible (D-state) sleep, measured on
+  the existing `sched_switch` hook - stamp on a D switch-out, charge the tgid
+  on the next switch-in. Attribution is inherently correct: the sleeping task
+  is charged, never the kworker that submits the bio. No top-like tool shows
+  this per process.
+- `prev->state` is probe-read via an injected BTF offset (`__state`; `state`
+  before 5.14), one code path for every kernel ≥ 5.10. The ≥ 5.18 `prev_state`
+  tracepoint argument is a later optimisation.
+- The interval includes post-wakeup runqueue delay; refining with
+  `sched_wakeup` (which also yields per-PID runqueue latency) is planned.
+- **Phase 2b (optional detail layer)**: block device latency per PID via
+  `block_rq_issue`/`block_rq_complete` keyed by `(dev, sector)`, with the
+  writeback-attribution caveat documented. Per-PID cache-hit ratio stays out
+  of the critical path.
 
 ---
 
@@ -110,6 +125,10 @@ low-microsecond - measured at ~1.6 µs under a `hackbench` context-switch storm
 context-switch rate, not the process count: ~8% under that storm, well under 1%
 in normal use, but **not zero**. The README must document this trade-off
 explicitly to avoid claims that will be challenged and disproven.
+
+The I/O-wait extension adds one probe-read (`prev->state`) and one lock-free
+map lookup per event; any change to the hotpath must be re-measured with the
+hotpath benchmark before the numbers above are quoted.
 
 ---
 
