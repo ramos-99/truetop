@@ -195,12 +195,21 @@ truetop attached, so the per-event figure has a wall-clock number behind it.
 | overhead %   | `hackbench` wall-clock, without versus with truetop |
 
 On the reference machine (AMD Ryzen 7 5800HS, 16 cores, turbo off), under
-`hackbench`, truetop adds **+15.0%** wall-clock (3.948s to 4.539s) at **~1.54 µs
-per context switch** (`run_time_ns / run_cnt`) over ~12M events. These are two
+`hackbench`, truetop adds **+5.0%** wall-clock (4.196s to 4.407s) at **~405 ns
+per context switch** (`run_time_ns / run_cnt`) over ~13M events. These are two
 independent measurements of the same cost - one from `bpf_stats`, one from
 wall-clock timing - so the per-event figure is a real cost, not a `bpf_stats`
 artefact, and it includes the cache-cold `task_struct` reads a context-switch
 storm forces (the CPU and I/O-wait metrics share this hook).
+
+That cost came down, and the drop was measured, not assumed. The schedule-in
+stopwatch used to be a tid-keyed per-CPU hashmap; since a CPU runs one thread at
+a time it is now a single per-CPU slot, and the on-CPU counter adds in place
+instead of a read-modify-write pair. Benched back to back on the same machine,
+that moved the hotpath from **633 ns / +11.3%** to the **405 ns / +5.0%** above:
+a 1.56x cut per event, with the storm overhead more than halved. What is left is
+dominated by the cache-cold `task_struct` probe-reads; the `prev_state`
+tracepoint argument (kernels >= 5.18) can drop one of them and trim it further.
 
 This is a worst case. hackbench drives roughly 800k context switches per second
 across the machine; truetop's overhead scales with that rate, not with process

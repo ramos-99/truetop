@@ -9,14 +9,12 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use aya::util::nr_cpus;
 use common::{clk_tck, proc_cpu_ticks, spawn};
 use truetop::attach;
 
 #[test]
 #[ignore = "needs root + a live kernel; run: cargo xtask test"]
 fn cpu_percent_matches_proc() -> Result<()> {
-    let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))? as f64;
     let (_ebpf, mut collector) = attach()?;
 
     let busy = spawn("sh", &["-c", "while :; do :; done"])?;
@@ -47,8 +45,8 @@ fn cpu_percent_matches_proc() -> Result<()> {
         .iter()
         .find(|p| p.pid == busy_pid)
         .context("busy process not seen by truetop")?;
-    // truetop reports % of total capacity; convert back to a one-core fraction.
-    let truetop_fraction = busy_row.cpu.cpu_percent * ncpus / 100.0;
+    // truetop reports top's %: 100.0 is one core, so scale to a one-core fraction.
+    let truetop_fraction = busy_row.cpu.cpu_percent / 100.0;
     assert!(
         (truetop_fraction - proc_fraction).abs() < 0.3,
         "truetop {truetop_fraction:.2} vs proc {proc_fraction:.2}"
