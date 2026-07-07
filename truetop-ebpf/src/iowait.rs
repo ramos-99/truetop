@@ -1,6 +1,8 @@
-//! I/O wait: time in uninterruptible (D-state) sleep, charged to the sleeping
-//! process itself - never the kworker that submits the bio. Stamp on D
-//! switch-out, charge tgid on the next switch-in.
+//! I/O wait: time in uninterruptible (D-state) sleep, charged to the task that
+//! actually blocks. A synchronous read charges the process that issued it;
+//! deferred writeback charges the flush kworker, since that is the task the
+//! kernel puts to sleep. Stamp on D switch-out, charge tgid on the next
+//! switch-in.
 //!
 //! `SLEEP_SINCE` is global, not per-CPU: a D interval spans CPUs, so per-CPU
 //! storage cannot pair its edges. Lookups are lock-free RCU; locked updates

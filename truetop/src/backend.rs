@@ -72,7 +72,7 @@ impl Collector {
             cpu_ns,
             iowait_ns,
             reader: BatchReader::new(ncpus),
-            cpu: CpuCollector::new(ncpus as f64),
+            cpu: CpuCollector::new(),
             iowait: IoWaitCollector::new(),
             names: Resolver::new(comm),
             mem: MemReader::new(),
@@ -93,7 +93,7 @@ impl Collector {
             .map(|pid| self.enrich(pid, &cpu, &io))
             .collect();
 
-        let total_cpu_percent = cpu.values().sum();
+        let total_cpu_percent = cpu.values().sum::<f64>() / self.ncpus as f64;
         let total_io_percent = io.values().sum();
         push_capped(&mut self.cpu_history, total_cpu_percent);
         push_capped(&mut self.io_history, total_io_percent);

@@ -101,9 +101,13 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
 **Phase 2 - killer feature (per-PID I/O wait)**:
 - Primary metric: time blocked in uninterruptible (D-state) sleep, measured on
   the existing `sched_switch` hook - stamp on a D switch-out, charge the tgid
-  on the next switch-in. Attribution is inherently correct: the sleeping task
-  is charged, never the kworker that submits the bio. No top-like tool shows
-  this per process.
+  on the next switch-in. The task that actually blocks is the one charged: a
+  synchronous read lands on the process that issued it, not on a kworker.
+  Deferred writeback is different, and honestly so: the writing task returns
+  once its pages are dirtied, and the flush later shows up under the flush
+  kworker's own D-state, because that is the task the kernel blocks. Charging
+  such writeback back to the originating app needs cgroup or page-owner
+  tracking and is future work. No top-like tool shows this per process.
 - `prev->state` is probe-read via an injected BTF offset (`__state`; `state`
   before 5.14), one code path for every kernel ≥ 5.10. The ≥ 5.18 `prev_state`
   tracepoint argument is a later optimisation.

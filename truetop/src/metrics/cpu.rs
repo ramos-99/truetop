@@ -1,13 +1,14 @@
 //! CPU%: diffs the per-process on-CPU nanosecond counter (`CPU_NS`, read in
-//! batch) between ticks and normalises to system capacity. Returns a per-pid
-//! map; the backend selects and enriches, the renderer sorts.
+//! batch) between ticks. Returns a per-pid map; the backend selects and
+//! enriches, the renderer sorts. The system total is normalised by core count
+//! in the backend.
 
 use std::collections::HashMap;
 
 use super::Snapshot;
 
-/// CPU share over the last interval, normalised to whole-system capacity
-/// (100.0 = every logical core saturated).
+/// CPU share over the last interval, in top's convention: 100.0 is one core, so
+/// a process running K threads flat out reads about K*100.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CpuMetrics {
     pub cpu_percent: f64,
@@ -15,19 +16,17 @@ pub struct CpuMetrics {
 
 pub(crate) struct CpuCollector {
     prev: Snapshot,
-    ncpus: f64,
 }
 
 impl CpuCollector {
-    pub(crate) fn new(ncpus: f64) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             prev: Snapshot::default(),
-            ncpus,
         }
     }
 
     /// Per-process CPU% for the interval, keyed by pid. First-sight pids read 0%
-    /// (no baseline).
+    /// (no baseline); multithreaded processes can exceed 100%.
     pub(crate) fn deltas(&mut self, current: Snapshot) -> HashMap<u32, f64> {
         let elapsed_ns = current.elapsed_ns_since(&self.prev);
         let out = current
@@ -36,8 +35,7 @@ impl CpuCollector {
             .map(|(&pid, &total)| {
                 let percent = match self.prev.by_pid.get(&pid) {
                     Some(&was) if elapsed_ns > 0.0 => {
-                        let delta = total.saturating_sub(was) as f64;
-                        (delta / elapsed_ns / self.ncpus * 100.0).clamp(0.0, 100.0)
+                        total.saturating_sub(was) as f64 / elapsed_ns * 100.0
                     }
                     _ => 0.0,
                 };
@@ -55,8 +53,8 @@ mod tests {
 
     use super::*;
 
-    fn collector(prev: &[(u32, u64)], base: Instant, ncpus: f64) -> CpuCollector {
-        let mut c = CpuCollector::new(ncpus);
+    fn collector(prev: &[(u32, u64)], base: Instant) -> CpuCollector {
+        let mut c = CpuCollector::new();
         c.prev = Snapshot {
             at: Some(base),
             by_pid: prev.iter().copied().collect(),
@@ -74,7 +72,7 @@ mod tests {
     #[test]
     fn zero_without_baseline() {
         let base = Instant::now();
-        let mut c = CpuCollector::new(1.0);
+        let mut c = CpuCollector::new();
         let out = c.deltas(snapshot(
             base + Duration::from_secs(1),
             &[(1, 1_000_000_000)],
@@ -82,32 +80,35 @@ mod tests {
         assert_eq!(out[&1], 0.0);
     }
 
+    // One core-second of on-CPU time over a one-second interval is 100%.
     #[test]
-    fn scales_by_cpu_count() {
+    fn full_core_reads_100() {
         let base = Instant::now();
-        let cur = snapshot(base + Duration::from_secs(1), &[(1, 1_000_000_000)]);
-        assert!((collector(&[(1, 0)], base, 1.0).deltas(cur.clone())[&1] - 100.0).abs() < 1e-6);
-        assert!((collector(&[(1, 0)], base, 4.0).deltas(cur)[&1] - 25.0).abs() < 1e-6);
+        let mut c = collector(&[(1, 0)], base);
+        let out = c.deltas(snapshot(
+            base + Duration::from_secs(1),
+            &[(1, 1_000_000_000)],
+        ));
+        assert!((out[&1] - 100.0).abs() < 1e-6);
+    }
+
+    // Top's convention: eight thread-seconds in one second read ~800%, unclamped.
+    #[test]
+    fn multithread_exceeds_100() {
+        let base = Instant::now();
+        let mut c = collector(&[(1, 0)], base);
+        let out = c.deltas(snapshot(
+            base + Duration::from_secs(1),
+            &[(1, 8_000_000_000)],
+        ));
+        assert!((out[&1] - 800.0).abs() < 1e-6);
     }
 
     #[test]
     fn saturates_on_counter_reset() {
         let base = Instant::now();
-        let mut c = collector(&[(1, 1_000_000_000)], base, 1.0);
-        assert_eq!(
-            c.deltas(snapshot(base + Duration::from_secs(1), &[(1, 0)]))[&1],
-            0.0
-        );
-    }
-
-    #[test]
-    fn clamps_to_single_core() {
-        let base = Instant::now();
-        let mut c = collector(&[(1, 0)], base, 1.0);
-        let out = c.deltas(snapshot(
-            base + Duration::from_secs(1),
-            &[(1, 10_000_000_000)],
-        ));
-        assert_eq!(out[&1], 100.0);
+        let mut c = collector(&[(1, 1_000_000_000)], base);
+        let out = c.deltas(snapshot(base + Duration::from_secs(1), &[(1, 0)]));
+        assert_eq!(out[&1], 0.0);
     }
 }
