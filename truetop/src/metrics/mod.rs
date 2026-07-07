@@ -21,10 +21,13 @@ pub use mem::MemMetrics;
 pub(crate) use mem::MemReader;
 
 /// One process as the renderer sees it: identity plus one slot per subsystem.
+/// Raw values only - the renderer formats them lazily for the visible rows
+/// (CLAUDE.md §3).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProcessMetrics {
     pub pid: u32,
     pub name: String,
+    pub user: Option<String>,
     pub cpu: CpuMetrics,
     pub mem: Option<MemMetrics>,
     pub io: Option<IoMetrics>,
@@ -33,7 +36,7 @@ pub struct ProcessMetrics {
 /// A per-process counter snapshot at one instant. Counter metrics derive a
 /// per-interval value from the delta between two snapshots over the elapsed
 /// time.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Snapshot {
     pub(crate) at: Option<Instant>,
     pub(crate) by_pid: HashMap<u32, u64>,

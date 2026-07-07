@@ -1,11 +1,12 @@
-//! Collector (backend) — producer side of the double-buffer (CLAUDE.md §3). It
-//! orchestrates the per-metric collectors in `metrics`: one batched map read
-//! drives CPU% (which establishes the row set), then each visible row is
-//! enriched with name and RSS. Publishes an immutable snapshot via an atomic
-//! pointer swap.
+//! Collector (backend) - producer side of the double-buffer (CLAUDE.md §3). Each
+//! [`Collector::tick`] diffs the CPU and I/O-wait counters into per-pid maps,
+//! enriches the union of the top rows of each with name/user/RSS, and publishes
+//! an immutable snapshot of raw values. Sorting and formatting are the
+//! renderer's job.
 
 use std::{
-    os::fd::{AsFd, AsRawFd},
+    collections::{HashMap, HashSet, VecDeque},
+    os::fd::{AsFd, AsRawFd, RawFd},
     sync::Arc,
     time::Duration,
 };
@@ -17,12 +18,31 @@ use truetop_common::COMM_LEN;
 
 use crate::{
     batch::BatchReader,
-    metrics::{CpuCollector, IoWaitCollector, MemReader, ProcessMetrics, Resolver, Snapshot},
+    metrics::{
+        CpuCollector, CpuMetrics, IoMetrics, IoWaitCollector, MemReader, ProcessMetrics, Resolver,
+        Snapshot,
+    },
 };
+
+/// Rows enriched (name/user/RSS via `/proc`) per sortable metric. The renderer
+/// truncates further to the viewport; enriching only the top of each metric
+/// keeps `/proc` reads bounded, not O(process count).
+const MAX_ROWS: usize = 256;
+
+/// Chart history depth, in ticks.
+const HISTORY: usize = 120;
+
+/// Per-pid CPU% and I/O-wait% for one tick.
+type Deltas = HashMap<u32, f64>;
 
 #[derive(Debug, Clone, Default)]
 pub struct SystemState {
     pub processes: Vec<ProcessMetrics>,
+    pub cpu_history: VecDeque<f64>,
+    pub io_history: VecDeque<f64>,
+    pub total_cpu_percent: f64,
+    pub total_io_percent: f64,
+    pub ncpus: usize,
 }
 
 /// Owns the per-metric collectors; each [`Collector::tick`] reads the maps and
@@ -35,6 +55,9 @@ pub struct Collector {
     iowait: IoWaitCollector,
     names: Resolver,
     mem: MemReader,
+    ncpus: usize,
+    cpu_history: VecDeque<f64>,
+    io_history: VecDeque<f64>,
 }
 
 impl Collector {
@@ -53,25 +76,80 @@ impl Collector {
             iowait: IoWaitCollector::new(),
             names: Resolver::new(comm),
             mem: MemReader::new(),
+            ncpus,
+            cpu_history: VecDeque::with_capacity(HISTORY),
+            io_history: VecDeque::with_capacity(HISTORY),
         }
     }
 
     pub fn tick(&mut self) -> SystemState {
-        let cpu_snapshot = Snapshot::new(self.reader.sum_per_cpu(fd_of(&self.cpu_ns)));
-        let io_snapshot = Snapshot::new(self.reader.sum_per_cpu(fd_of(&self.iowait_ns)));
+        let cpu_snap = read_counter(&mut self.reader, &self.cpu_ns);
+        let cpu = self.cpu.deltas(cpu_snap);
+        let io_snap = read_counter(&mut self.reader, &self.iowait_ns);
+        let io = self.iowait.deltas(io_snap);
 
-        let mut processes = self.cpu.collect(cpu_snapshot);
-        self.iowait.enrich(io_snapshot, &mut processes);
-        for p in &mut processes {
-            p.name = self.names.resolve(p.pid);
-            p.mem = self.mem.for_pid(p.pid);
+        let processes = select_candidates(&cpu, &io, MAX_ROWS)
+            .into_iter()
+            .map(|pid| self.enrich(pid, &cpu, &io))
+            .collect();
+
+        let total_cpu_percent = cpu.values().sum();
+        let total_io_percent = io.values().sum();
+        push_capped(&mut self.cpu_history, total_cpu_percent);
+        push_capped(&mut self.io_history, total_io_percent);
+
+        SystemState {
+            processes,
+            cpu_history: self.cpu_history.clone(),
+            io_history: self.io_history.clone(),
+            total_cpu_percent,
+            total_io_percent,
+            ncpus: self.ncpus,
         }
-        SystemState { processes }
+    }
+
+    /// One candidate pid to a full row: its counter values plus name, user, RSS.
+    fn enrich(&self, pid: u32, cpu: &Deltas, io: &Deltas) -> ProcessMetrics {
+        ProcessMetrics {
+            pid,
+            name: self.names.resolve(pid),
+            user: self.names.user(pid),
+            cpu: CpuMetrics {
+                cpu_percent: cpu.get(&pid).copied().unwrap_or(0.0),
+            },
+            mem: self.mem.for_pid(pid),
+            io: io.get(&pid).map(|&percent| IoMetrics {
+                io_wait_percent: percent,
+            }),
+        }
     }
 }
 
-fn fd_of(map: &MapData) -> std::os::fd::RawFd {
-    map.fd().as_fd().as_raw_fd()
+fn read_counter(reader: &mut BatchReader, map: &MapData) -> Snapshot {
+    Snapshot::new(reader.sum_per_cpu(map.fd().as_fd().as_raw_fd() as RawFd))
+}
+
+/// The union of the top-`cap` pids by CPU and by I/O wait: whatever the renderer
+/// sorts by, the true top of that metric is present and enriched.
+fn select_candidates(cpu: &Deltas, io: &Deltas, cap: usize) -> Vec<u32> {
+    let mut pids: HashSet<u32> = HashSet::with_capacity(cap * 2);
+    pids.extend(top_pids(cpu, cap));
+    pids.extend(top_pids(io, cap));
+    pids.into_iter().collect()
+}
+
+fn top_pids(values: &Deltas, cap: usize) -> Vec<u32> {
+    let mut ranked: Vec<(u32, f64)> = values.iter().map(|(&pid, &v)| (pid, v)).collect();
+    ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.truncate(cap);
+    ranked.into_iter().map(|(pid, _)| pid).collect()
+}
+
+fn push_capped(buf: &mut VecDeque<f64>, value: f64) {
+    if buf.len() >= HISTORY {
+        buf.pop_front();
+    }
+    buf.push_back(value);
 }
 
 /// Drive the double-buffer at 1 Hz until the task is dropped at shutdown.
@@ -91,5 +169,19 @@ pub fn run_headless(mut collector: Collector, ticks: u32) {
         std::thread::sleep(Duration::from_secs(1));
         let snapshot = collector.tick();
         println!("tick {i}/{ticks}: {} processes", snapshot.processes.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidates_union_top_cpu_and_top_io() {
+        let cpu = Deltas::from([(1, 90.0), (2, 10.0), (3, 1.0)]);
+        // pid 4 has high I/O but no CPU rank: it must still make the cut.
+        let io = Deltas::from([(3, 80.0), (4, 70.0), (5, 1.0)]);
+        let got: HashSet<u32> = select_candidates(&cpu, &io, 2).into_iter().collect();
+        assert_eq!(got, HashSet::from([1, 2, 3, 4]));
     }
 }
