@@ -48,8 +48,9 @@ error, so the machine is never left tuned. Pass `--no-prep` to skip the tuning (
 a VM or in CI). macro and hotpath need root, so it elevates with `sudo`.
 
 Every benchmark writes to `bench/results/`: the criterion report under
-`criterion/`, plus `macro.csv`, `scaling.svg`, and `hotpath.txt`. Only
-`scaling.svg` is tracked in git; the rest is regenerated per run.
+`criterion/`, plus `macro.csv`, `scaling.svg`, `hotpath.txt`, and `env.txt`
+(commit, kernel, CPU, governor). Only `scaling.svg` is tracked in git; the rest is
+regenerated per run.
 
 ### Requirements
 
@@ -184,36 +185,22 @@ The macro benchmark counts the per-process syscalls truetop avoids in user space
 This one counts what it adds in the kernel. `sched_switch` runs on every context
 switch, which is the trade-off the README's Overhead section describes.
 
-With `kernel.bpf_stats_enabled` set, `bpftool prog show` reports `run_cnt` and
-`run_time_ns` per program, and their ratio is the per-event cost. The script
-samples that across a `hackbench` run and also times `hackbench` with and without
-truetop attached, so the per-event figure has a wall-clock number behind it.
+With `kernel.bpf_stats_enabled`, the per-event cost is `run_time_ns / run_cnt`,
+sampled over short windows during a `hackbench` storm and reported as a median
+with IQR. The wall-clock overhead is a difference of two noisy runs, so it is
+order of magnitude only.
 
-| metric       | source                                              |
-| ------------ | --------------------------------------------------- |
-| per-event ns | `run_time_ns / run_cnt` for `sched_switch`          |
-| overhead %   | `hackbench` wall-clock, without versus with truetop |
+Reference machine (Ryzen 7 5800HS, 16 cores, turbo off): **~393 ns/event**, IQR
+[392, 396] (n=22), whole-system overhead single-digit percent. It scales with the
+context-switch rate, not process count, so normal systems pay well under 1%.
 
-On the reference machine (AMD Ryzen 7 5800HS, 16 cores, turbo off), under
-`hackbench`, truetop adds **+5.0%** wall-clock (4.196s to 4.407s) at **~405 ns
-per context switch** (`run_time_ns / run_cnt`) over ~13M events. These are two
-independent measurements of the same cost - one from `bpf_stats`, one from
-wall-clock timing - so the per-event figure is a real cost, not a `bpf_stats`
-artefact, and it includes the cache-cold `task_struct` reads a context-switch
-storm forces (the CPU and I/O-wait metrics share this hook).
+Two changes, same machine:
 
-That cost came down, and the drop was measured, not assumed. The schedule-in
-stopwatch used to be a tid-keyed per-CPU hashmap; since a CPU runs one thread at
-a time it is now a single per-CPU slot, and the on-CPU counter adds in place
-instead of a read-modify-write pair. Benched back to back on the same machine,
-that moved the hotpath from **633 ns / +11.3%** to the **405 ns / +5.0%** above:
-a 1.56x cut per event, with the storm overhead more than halved. What is left is
-dominated by the cache-cold `task_struct` probe-reads; the `prev_state`
-tracepoint argument (kernels >= 5.18) can drop one of them and trim it further.
+| stopwatch and state read                       | per-event          |
+| ---------------------------------------------- | ------------------ |
+| tid-keyed per-CPU hashmap, probe-read state    | ~630 ns            |
+| single-slot array, in-place counter add        | ~434 ns            |
+| `prev_state` from the tracepoint arg (>= 5.18) | ~393 ns [392, 396] |
 
-This is a worst case. hackbench drives roughly 800k context switches per second
-across the machine; truetop's overhead scales with that rate, not with process
-count, so a normal system doing orders of magnitude fewer switches pays
-proportionally less, well under 1%. Enabling run statistics adds a small per-run
-cost of its own, so the figure is if anything slightly pessimistic. Re-run on your
-hardware; the shape holds.
+The last two IQRs do not overlap. What is left is the cache-cold `task_struct`
+reads the storm forces. Numbers are machine-specific; re-run for yours.
