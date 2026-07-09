@@ -27,11 +27,11 @@ static SLEEP_SINCE: HashMap<u32, u64> = HashMap::with_max_entries(16384, 0);
 static IOWAIT_NS: PerCpuHashMap<u32, u64> = PerCpuHashMap::with_max_entries(16384, 0);
 
 #[inline(always)]
-pub(crate) fn sleep_out(prev: &Task, tid: u32, now: u64) {
+pub(crate) fn sleep_out(state: u32, tid: u32, now: u64) {
     if tid == 0 {
         return;
     }
-    if prev.state() & (TASK_UNINTERRUPTIBLE | TASK_NOLOAD) == TASK_UNINTERRUPTIBLE {
+    if state & (TASK_UNINTERRUPTIBLE | TASK_NOLOAD) == TASK_UNINTERRUPTIBLE {
         let _ = SLEEP_SINCE.insert(tid, now, 0);
     }
 }

@@ -12,10 +12,12 @@ const VMLINUX_BTF: &str = "/sys/kernel/btf/vmlinux";
 
 // BTF kind tags (uapi/linux/btf.h).
 const KIND_INT: u32 = 1;
+const KIND_PTR: u32 = 2;
 const KIND_ARRAY: u32 = 3;
 const KIND_STRUCT: u32 = 4;
 const KIND_UNION: u32 = 5;
 const KIND_ENUM: u32 = 6;
+const KIND_TYPEDEF: u32 = 8;
 const KIND_FUNC_PROTO: u32 = 13;
 const KIND_VAR: u32 = 14;
 const KIND_DATASEC: u32 = 15;
@@ -26,6 +28,14 @@ const KIND_ENUM64: u32 = 19;
 /// kernel's BTF.
 pub fn field_byte_offset(struct_name: &str, field: &str) -> Result<u32> {
     Btf::load()?.field_offset(struct_name, field)
+}
+
+/// Whether the running kernel's `sched_switch` raw tracepoint carries the
+/// `prev_state` argument (added in 5.18), from the tracepoint's BTF prototype.
+pub fn sched_switch_has_prev_state() -> Result<bool> {
+    // ctx + (preempt, prev, next) is 4; 5.18 appends prev_state, making 5.
+    let params = Btf::load()?.tracepoint_proto_params("btf_trace_sched_switch")?;
+    Ok(params >= 5)
 }
 
 struct Btf {
@@ -118,6 +128,65 @@ impl Btf {
         }
         bail!("struct `{struct_name}` not found in BTF");
     }
+
+    /// Parameter count of the prototype behind a `btf_trace_*` typedef: the
+    /// tracepoint's context pointer plus its `TP_PROTO` arguments.
+    fn tracepoint_proto_params(&self, typedef: &str) -> Result<usize> {
+        let offsets = self.type_offsets();
+        let typedef = self
+            .find_type(&offsets, KIND_TYPEDEF, typedef)
+            .with_context(|| format!("typedef `{typedef}` not in BTF"))?;
+        let pointer = self.referent(&offsets, typedef, KIND_PTR)?;
+        let prototype = self.referent(&offsets, pointer, KIND_FUNC_PROTO)?;
+        Ok(self.vlen(prototype))
+    }
+
+    /// Byte offset of each type record, indexed by BTF type id (0 is void).
+    fn type_offsets(&self) -> Vec<usize> {
+        let end = (self.type_off + self.type_len).min(self.data.len());
+        let mut offsets = vec![0]; // id 0 is void: no record.
+        let mut cur = self.type_off;
+        while cur + 12 <= end {
+            offsets.push(cur);
+            let Some(info) = self.u32(cur + 4) else { break };
+            let vlen = (info & 0xffff) as usize;
+            let kind = (info >> 24) & 0x1f;
+            cur += 12 + extra_len(kind, vlen);
+        }
+        offsets
+    }
+
+    /// Follow a typedef or pointer's `type` reference, confirming the target kind.
+    fn referent(&self, offsets: &[usize], off: usize, expected: u32) -> Result<usize> {
+        let target = self.u32(off + 8).context("truncated type")? as usize;
+        let dst = (offsets.get(target).copied())
+            .filter(|&o| o != 0)
+            .context("dangling type reference")?;
+        if self.kind(dst) != expected {
+            bail!("unexpected BTF kind in reference chain");
+        }
+        Ok(dst)
+    }
+
+    fn find_type(&self, offsets: &[usize], kind: u32, name: &str) -> Option<usize> {
+        offsets
+            .iter()
+            .skip(1)
+            .copied()
+            .find(|&off| self.kind(off) == kind && self.type_name(off) == name)
+    }
+
+    fn type_name(&self, off: usize) -> &str {
+        self.u32(off).map_or("", |n| self.string(n))
+    }
+
+    fn kind(&self, off: usize) -> u32 {
+        self.u32(off + 4).map_or(0, |info| (info >> 24) & 0x1f)
+    }
+
+    fn vlen(&self, off: usize) -> usize {
+        self.u32(off + 4).map_or(0, |info| (info & 0xffff) as usize)
+    }
 }
 
 /// Bytes of per-kind trailing data after the 12-byte `btf_type` header.
@@ -205,6 +274,84 @@ mod tests {
     fn unknown_struct_is_error() {
         let btf = Btf::from_bytes(sample_btf(true)).unwrap();
         assert!(btf.field_offset("missing", "pid").is_err());
+    }
+
+    // BTF for `typedef void (*btf_trace_sched_switch)(...)` whose prototype has
+    // `params` parameters, to exercise the typedef -> pointer -> proto walk.
+    fn tracepoint_btf(le: bool, params: u32) -> Vec<u8> {
+        let word = |v: &mut Vec<u8>, x: u32| {
+            v.extend_from_slice(&if le { x.to_le_bytes() } else { x.to_be_bytes() });
+        };
+
+        let mut types = Vec::new();
+        for w in [0, KIND_INT << 24, 4, 0] {
+            word(&mut types, w); // id 1: int, the type each param points at
+        }
+        for w in [0, (KIND_FUNC_PROTO << 24) | params, 0] {
+            word(&mut types, w); // id 2: the prototype
+        }
+        for _ in 0..params {
+            for w in [0, 1] {
+                word(&mut types, w); // btf_param { name_off, type = int }
+            }
+        }
+        for w in [0, KIND_PTR << 24, 2] {
+            word(&mut types, w); // id 3: pointer to the prototype
+        }
+        for w in [1, KIND_TYPEDEF << 24, 3] {
+            word(&mut types, w); // id 4: btf_trace_sched_switch -> pointer
+        }
+
+        let strings = b"\0btf_trace_sched_switch\0";
+        let mut buf = Vec::new();
+        let magic = 0xeb9fu16;
+        buf.extend_from_slice(&if le {
+            magic.to_le_bytes()
+        } else {
+            magic.to_be_bytes()
+        });
+        buf.extend_from_slice(&[1, 0]);
+        for w in [
+            24,
+            0,
+            types.len() as u32,
+            types.len() as u32,
+            strings.len() as u32,
+        ] {
+            word(&mut buf, w);
+        }
+        buf.extend_from_slice(&types);
+        buf.extend_from_slice(strings);
+        buf
+    }
+
+    #[test]
+    fn counts_tracepoint_prototype_params() {
+        for le in [true, false] {
+            let pre_518 = Btf::from_bytes(tracepoint_btf(le, 4)).unwrap();
+            let from_518 = Btf::from_bytes(tracepoint_btf(le, 5)).unwrap();
+            assert_eq!(
+                pre_518
+                    .tracepoint_proto_params("btf_trace_sched_switch")
+                    .unwrap(),
+                4
+            );
+            assert_eq!(
+                from_518
+                    .tracepoint_proto_params("btf_trace_sched_switch")
+                    .unwrap(),
+                5
+            );
+        }
+    }
+
+    #[test]
+    fn absent_tracepoint_typedef_is_error() {
+        let btf = Btf::from_bytes(tracepoint_btf(true, 5)).unwrap();
+        assert!(
+            btf.tracepoint_proto_params("btf_trace_sched_wakeup")
+                .is_err()
+        );
     }
 
     #[test]

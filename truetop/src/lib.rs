@@ -79,12 +79,17 @@ fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
     let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
     let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
     let state = state_offset()?;
-    log::info!("CO-RE offsets - pid: {pid}, tgid: {tgid}, state: {state}");
+    // A miss falls back to the probe-read path, correct on any kernel.
+    let has_prev_state = btf::sched_switch_has_prev_state().unwrap_or(false);
+    log::info!(
+        "CO-RE offsets - pid: {pid}, tgid: {tgid}, state: {state}; prev_state arg: {has_prev_state}"
+    );
 
     EbpfLoader::new()
         .override_global("PID_OFFSET", &pid, true)
         .override_global("TGID_OFFSET", &tgid, true)
         .override_global("STATE_OFFSET", &state, true)
+        .override_global("HAS_PREV_STATE", &u32::from(has_prev_state), true)
         .load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/truetop"
