@@ -7,6 +7,19 @@
 ![harness](https://img.shields.io/badge/harness-criterion_%C2%B7_strace_%C2%B7_bpftool-8250DF?style=flat-square)
 ![built with](https://img.shields.io/badge/Rust-2024-DEA584?style=flat-square&logo=rust&logoColor=white)
 
+Reference machine: AMD Ryzen 7 5800HS, 16 cores. Details and caveats below.
+
+| metric                              | truetop               | htop / btop           |
+| ----------------------------------- | --------------------- | --------------------- |
+| CPU at ~9,000 processes             | **1.7%** of a core, flat | 33% / 22%, climbing |
+| data syscalls per refresh at ~5,000 | **~780**              | ~12,000 (htop)        |
+| per-process collection work         | **~30 ns**            | ~12 µs (procfs)       |
+
+*Exclusive:* per-process D-state I/O wait, which none of them show. *Cost:* the
+kernel `sched_switch` hook adds ~393 ns/switch (scales with the switch rate,
+single-digit % under a storm, well under 1% normally), and truetop's RSS is a
+higher but flat ~20 MiB floor.
+
 Per-process CPU is collected in-kernel and pulled in one batched syscall, instead
 of parsing `/proc/<pid>/stat` once per process. That makes CPU collection O(1) in
 syscalls per refresh instead of O(N). The price is an O(1) eBPF program on every
@@ -14,65 +27,65 @@ context switch, measured in the hotpath benchmark below.
 
 ## Result
 
-![CPU collection cost versus process count](results/scaling.svg)
+![Monitor CPU% versus process count](results/selfcpu-cpu.svg)
 
-Per-process data syscalls per refresh, traced with `strace` against the real
-tools:
+CPU% of one core, median, htop/btop at a 1s refresh:
 
-| Processes | top    | htop   | truetop | truetop's edge |
-| --------: | -----: | -----: | ------: | -------------: |
-|       362 |    728 |    332 | **309** |           1.1x |
-|       613 |  1,230 |    896 | **783** |           1.1x |
-|       863 |  1,731 |  1,481 | **782** |           1.9x |
-|     1,364 |  2,733 |  2,374 | **782** |           3.0x |
-|     2,364 |  4,733 |  5,127 | **782** |           6.0x |
-|     5,365 | 10,449 | 11,959 | **782** |          13.4x |
+| processes | htop | btop | truetop |
+| --------: | ---: | ---: | ------: |
+|       377 |  4.0 |  0.7 |     0.3 |
+|     1,382 |  8.0 |  2.0 |     1.0 |
+|     2,883 | 14.0 |  4.0 |     1.0 |
+|     5,382 | 19.0 |  9.3 |     1.3 |
+|     8,892 | 33.2 | 21.6 |     1.7 |
 
-top and htop read one `/proc/<pid>` file per process, so their cost grows with
-process count. truetop batch-reads the CPU map once and touches `/proc` only for
-the visible viewport, so it stays flat. At 5,365 processes it issues ~780 syscalls
-per refresh against htop's ~11,959. Edge is the fewest-syscall competitor divided
-by truetop; lower is better.
+htop and btop read one `/proc` entry per process each refresh (O(N)); truetop
+batch-reads the CPU map and touches `/proc` only for the visible viewport, so it
+stays flat. At ~9,000 processes that is ~20x less CPU than htop and ~13x less than
+btop, and the gap widens with N. This is the user-space cost; the kernel
+`sched_switch` price and the RSS trade-off are in the sections below.
 
 ## Running
 
 ```sh
-cargo xtask bench                  # all three
+cargo xtask bench                  # micro, macro, hotpath
 cargo xtask bench micro macro      # or any subset, in any order
+cargo xtask bench selfcpu          # opt-in: needs btop/htop installed
 ```
 
 One command builds what it needs, runs the benchmarks, and for stable numbers
 pins the CPU governor to `performance`, disables turbo, and pins the micro
 benchmark to one core. It restores the original CPU settings on exit, including on
 error, so the machine is never left tuned. Pass `--no-prep` to skip the tuning (on
-a VM or in CI). macro and hotpath need root, so it elevates with `sudo`.
+a VM or in CI). macro, hotpath and selfcpu need root, so it elevates with `sudo`.
 
 Every benchmark writes to `bench/results/`: the criterion report under
-`criterion/`, plus `macro.csv`, `scaling.svg`, `hotpath.txt`, and `env.txt`
-(commit, kernel, CPU, governor). Only `scaling.svg` is tracked in git; the rest is
-regenerated per run.
+`criterion/`, plus `macro.csv`, `hotpath.txt`, `selfcpu.csv`, `env.txt` (commit,
+kernel, CPU, governor), and the `scaling.svg`, `selfcpu-cpu.svg`, `selfcpu-rss.svg`
+plots. Only the `.svg` plots are tracked in git; the rest is regenerated per run.
 
 ### Requirements
 
-micro needs only a Rust toolchain; macro and hotpath shell out to standard tools
-and need root. Each script checks its own dependencies and names any that are
-missing before doing work, so a partial install fails fast rather than mid-run.
+micro needs only a Rust toolchain; the rest shell out to standard tools and need
+root. Each script checks its own dependencies and names any that are missing
+before doing work, so a partial install fails fast rather than mid-run.
 
 | benchmark | tools it calls                                                            |
 | --------- | ------------------------------------------------------------------------- |
 | micro     | `cargo` (criterion is a dev-dependency); `taskset` used for pinning if present |
 | macro     | `strace`, `script`, `top`, `htop`; `python3` + `matplotlib` for the plot  |
 | hotpath   | `bpftool`, `jq`, `hackbench`                                               |
+| selfcpu   | `script`, `btop`, `htop`; `python3` + `matplotlib` for the plot           |
 
 `script`, `taskset`, and `timeout` come from util-linux/coreutils and are almost
 always already installed. The rest, by distro:
 
 ```sh
 # Arch (hackbench is in the AUR via rt-tests)
-sudo pacman -S --needed strace htop bpf jq python-matplotlib
+sudo pacman -S --needed strace htop btop bpf jq python-matplotlib
 
 # Debian / Ubuntu
-sudo apt install strace htop jq rt-tests python3-matplotlib linux-tools-$(uname -r)
+sudo apt install strace htop btop jq rt-tests python3-matplotlib linux-tools-$(uname -r)
 ```
 
 Package names vary; the table above is the source of truth for what must be on
@@ -81,15 +94,16 @@ Package names vary; the table above is the source of truth for what must be on
 
 ## At a glance
 
-|             | Question it answers                | Method                            | Run                          |
-| ----------- | ---------------------------------- | --------------------------------- | ---------------------------- |
-| **micro**   | Is the per-process *work* cheaper? | in-memory model, no `bpf()` call  | `cargo xtask bench micro`    |
-| **macro**   | Does it cut *syscalls* at scale?   | `strace` vs top / htop            | `cargo xtask bench macro`    |
-| **hotpath** | What does the kernel work *cost*?  | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath`  |
+|             | Measures                          | Method                            | Run                         |
+| ----------- | --------------------------------- | --------------------------------- | --------------------------- |
+| **micro**   | per-process collection work       | in-memory model, no `bpf()` call  | `cargo xtask bench micro`   |
+| **macro**   | data syscalls per refresh at scale | `strace` vs top / htop           | `cargo xtask bench macro`   |
+| **hotpath** | kernel cost per context switch    | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath` |
+| **selfcpu** | the tool's own CPU% and RSS       | sample `/proc` vs btop / htop     | `cargo xtask bench selfcpu` |
 
-The three measure different things. The micro is the per-process cost, the macro
-is how that adds up across processes, and the hotpath is the kernel-side cost the
-other two ignore.
+micro is the per-process cost, macro is how it adds up across processes, hotpath
+is the kernel-side cost the first two ignore, and selfcpu is what the running tool
+burns against btop / htop.
 
 ## micro: per-process work
 
@@ -127,7 +141,24 @@ against a stale baseline.
 
 ## macro: versus top and htop
 
-The chart and table at the top of this doc come from here.
+![CPU collection cost versus process count](results/scaling.svg)
+
+Per-process data syscalls per refresh, traced with `strace` against the real tools:
+
+| Processes | top    | htop   | truetop | truetop's edge |
+| --------: | -----: | -----: | ------: | -------------: |
+|       362 |    728 |    332 | **309** |           1.1x |
+|       613 |  1,230 |    896 | **783** |           1.1x |
+|       863 |  1,731 |  1,481 | **782** |           1.9x |
+|     1,364 |  2,733 |  2,374 | **782** |           3.0x |
+|     2,364 |  4,733 |  5,127 | **782** |           6.0x |
+|     5,365 | 10,449 | 11,959 | **782** |          13.4x |
+
+top and htop read one `/proc/<pid>` file per process, so their cost grows with
+process count. truetop batch-reads the CPU map once and touches `/proc` only for
+the visible viewport, so it stays flat. At 5,365 processes it issues ~780 syscalls
+per refresh against htop's ~11,959. Edge is the fewest-syscall competitor divided
+by truetop; lower is better.
 
 ```sh
 cargo xtask bench macro            # wraps: sudo bench/macro/run.sh + plot.py
@@ -157,8 +188,7 @@ instead. The visible crossing in the plot is between top and htop, not truetop.
 There is a crossover, but only below the point where it matters. If fewer than
 about 256 processes are all active at once, procfs's single stat per file can beat
 truetop's per-row read plus name lookup. Real systems run hundreds of processes
-with few active, so truetop wins in practice, and the gap widens without bound as
-N grows.
+with few active, so truetop is cheaper in practice, and the gap grows with N.
 
 **Why `--bench`.** truetop runs headless (`truetop --bench <ticks>`). `strace`
 ptrace-traps every syscall, and the TUI input poll issues enough of them to starve
@@ -204,3 +234,36 @@ Two changes, same machine:
 
 The last two IQRs do not overlap. What is left is the cache-cold `task_struct`
 reads the storm forces. Numbers are machine-specific; re-run for yours.
+
+## selfcpu: the tool's own cost
+
+```sh
+cargo xtask bench selfcpu          # wraps: sudo bench/selfcpu/run.sh + plot.py
+```
+
+The chart and table are the Result at the top. The other benchmarks measure
+truetop's collection path; this one measures the whole running process. It samples
+`/proc/<pid>/stat` for each monitor under a controlled load (the `load` generator
+forks N processes that reschedule at ~0% CPU so every monitor sees them), and
+reports CPU% as a median with IQR over windows long enough to average out the
+refresh, plus RSS from `statm`. truetop appears twice: with its UI (parity with
+btop/htop, which render) and as the headless collector (`--bench`). At idle the UI
+and the collector read the same ~0: redraw-on-change means the UI does not repaint
+while the snapshot is unchanged.
+
+This is the user-space cost only. truetop's total also carries the kernel
+`sched_switch` cost from the hotpath benchmark, which htop and btop do not pay; it
+scales with the context-switch rate, so on a switch-heavy machine it can offset the
+user-space saving.
+
+![Monitor RSS versus process count](results/selfcpu-rss.svg)
+
+RSS is a trade-off. truetop has a higher fixed floor (~20 MiB: the eBPF maps plus
+the async runtime) but stays flat; htop and btop start near 8-9 MiB and grow with
+N, crossing truetop around 8,000 processes. Below that, truetop uses more.
+
+Caveats: htop and btop CPU% depends on their configuration (columns, tree view,
+meters); these ran defaults at a normalised 1s refresh, and the figure is
+terminal-geometry dependent (render cost scales with visible rows). The jiffy
+resolution (~0.3% per window) separates truetop from the others but is too coarse
+to split the UI from the collector; that needs `perf stat`.
