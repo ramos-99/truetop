@@ -16,9 +16,10 @@ Reference machine: AMD Ryzen 7 5800HS, 16 cores. Details and caveats below.
 | per-process collection work         | **~30 ns**            | ~12 µs (procfs)       |
 
 *Exclusive:* per-process D-state I/O wait, which none of them show. *Cost:* the
-kernel `sched_switch` hook adds ~393 ns/switch (scales with the switch rate,
-single-digit % under a storm, well under 1% normally), and truetop's RSS is a
-higher but flat ~20 MiB floor.
+kernel `sched_switch` hook runs on every context switch (~200-400 ns each), so
+truetop is cheaper than htop only while switches/s < ~70,000 + 113 x processes; a
+switch-heavy machine with few processes costs more, not less. RSS is a higher but
+flat ~20 MiB floor.
 
 Per-process CPU is collected in-kernel and pulled in one batched syscall, instead
 of parsing `/proc/<pid>/stat` once per process. That makes CPU collection O(1) in
@@ -50,42 +51,44 @@ btop, and the gap widens with N. This is the user-space cost; the kernel
 ```sh
 cargo xtask bench                  # micro, macro, hotpath
 cargo xtask bench micro macro      # or any subset, in any order
-cargo xtask bench selfcpu          # opt-in: needs btop/htop installed
+cargo xtask bench selfcpu switch   # opt-in: need btop/htop/stress-ng installed
 ```
 
 One command builds what it needs, runs the benchmarks, and for stable numbers
 pins the CPU governor to `performance`, disables turbo, and pins the micro
 benchmark to one core. It restores the original CPU settings on exit, including on
 error, so the machine is never left tuned. Pass `--no-prep` to skip the tuning (on
-a VM or in CI). macro, hotpath and selfcpu need root, so it elevates with `sudo`.
+a VM or in CI). Everything but micro needs root, so it elevates with `sudo`.
 
 Every benchmark writes to `bench/results/`: the criterion report under
-`criterion/`, plus `macro.csv`, `hotpath.txt`, `selfcpu.csv`, `env.txt` (commit,
-kernel, CPU, governor), and the `scaling.svg`, `selfcpu-cpu.svg`, `selfcpu-rss.svg`
-plots. Only the `.svg` plots are tracked in git; the rest is regenerated per run.
+`criterion/`, plus `macro.csv`, `hotpath.txt`, `selfcpu.csv`, `switch.csv`, the
+`scaling.svg` / `selfcpu-cpu.svg` / `selfcpu-rss.svg` plots, and `env.txt` (commit,
+kernel, CPU, governor, clocksource). Only the `.svg` plots are tracked in git; the
+rest is regenerated per run.
 
 ### Requirements
 
 micro needs only a Rust toolchain; the rest shell out to standard tools and need
-root. Each script checks its own dependencies and names any that are missing
-before doing work, so a partial install fails fast rather than mid-run.
+root. Each script names its own missing dependencies before doing any work, so a
+partial install fails on the benchmark that needs the tool, not halfway through it.
 
 | benchmark | tools it calls                                                            |
 | --------- | ------------------------------------------------------------------------- |
 | micro     | `cargo` (criterion is a dev-dependency); `taskset` used for pinning if present |
 | macro     | `strace`, `script`, `top`, `htop`; `python3` + `matplotlib` for the plot  |
-| hotpath   | `bpftool`, `jq`, `hackbench`                                               |
+| hotpath   | `bpftool`, `jq`, `hackbench`, `perf`                                       |
 | selfcpu   | `script`, `btop`, `htop`; `python3` + `matplotlib` for the plot           |
+| switch    | `script`, `btop`, `htop`, `stress-ng`, `bpftool`, `jq`                     |
 
 `script`, `taskset`, and `timeout` come from util-linux/coreutils and are almost
 always already installed. The rest, by distro:
 
 ```sh
 # Arch (hackbench is in the AUR via rt-tests)
-sudo pacman -S --needed strace htop btop bpf jq python-matplotlib
+sudo pacman -S --needed strace htop btop bpf jq perf stress-ng python-matplotlib
 
 # Debian / Ubuntu
-sudo apt install strace htop btop jq rt-tests python3-matplotlib linux-tools-$(uname -r)
+sudo apt install strace htop btop jq rt-tests stress-ng python3-matplotlib linux-tools-$(uname -r)
 ```
 
 Package names vary; the table above is the source of truth for what must be on
@@ -100,10 +103,12 @@ Package names vary; the table above is the source of truth for what must be on
 | **macro**   | data syscalls per refresh at scale | `strace` vs top / htop           | `cargo xtask bench macro`   |
 | **hotpath** | kernel cost per context switch    | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath` |
 | **selfcpu** | the tool's own CPU% and RSS       | sample `/proc` vs btop / htop     | `cargo xtask bench selfcpu` |
+| **switch**  | that cost under a switch storm    | `stress-ng --switch` vs btop / htop | `cargo xtask bench switch` |
 
-micro is the per-process cost, macro is how it adds up across processes, hotpath
-is the kernel-side cost the first two ignore, and selfcpu is what the running tool
-burns against btop / htop.
+micro is the per-process cost, macro is how it adds up across processes, hotpath is
+the kernel-side cost the first two ignore, selfcpu is what the running tool burns
+against btop / htop as processes grow, and switch is the same against the context-
+switch rate, which is the axis truetop loses on.
 
 ## micro: per-process work
 
@@ -215,25 +220,39 @@ The macro benchmark counts the per-process syscalls truetop avoids in user space
 This one counts what it adds in the kernel. `sched_switch` runs on every context
 switch, which is the trade-off the README's Overhead section describes.
 
-With `kernel.bpf_stats_enabled`, the per-event cost is `run_time_ns / run_cnt`,
-sampled over short windows during a `hackbench` storm and reported as a median
-with IQR. The wall-clock overhead is a difference of two noisy runs, so it is
-order of magnitude only.
+With `kernel.bpf_stats_enabled`, `run_time_ns / run_cnt` is the whole invocation,
+helper calls included; it is sampled over short windows during a `hackbench` storm
+and reported as a median with IQR. `perf` separately attributes cycles to the JIT'd
+`bpf_prog_*` symbol, which covers the program's own code only: helpers are kernel
+functions and land in their own symbols, so the difference is what they cost. The
+wall-clock overhead is a difference of two noisy runs, so it is order of magnitude
+only.
 
-Reference machine (Ryzen 7 5800HS, 16 cores, turbo off): **~393 ns/event**, IQR
-[392, 396] (n=22), whole-system overhead single-digit percent. It scales with the
-context-switch rate, not process count, so normal systems pay well under 1%.
+Reference machine (Ryzen 7 5800HS, 16 cores, turbo off, `tsc` clocksource), under
+`hackbench`: **~391 ns/event**, IQR [390, 393] (n=22), whole-system overhead
+single-digit percent. Of that, ~112 ns is the program's own code; the other ~279 ns
+(71%) is helper calls: the clock read, the `task_struct` probe reads, and the map
+operations.
 
-Two changes, same machine:
+It is not one number. It tracks cache locality, because the probe reads dominate:
+hackbench churns 640 distinct tasks and costs ~391 ns/event, while
+`stress-ng --switch` alternates between few hot ones and costs ~200 ns. Read it as
+**200-400 ns, depending on how many distinct tasks are switching**.
+
+It also tracks the machine's clocksource, since `bpf_ktime_get_ns` runs once per
+event: a `tsc` read is ~20 ns, an `hpet` read is ~1 µs. When this machine's kernel
+watchdog demoted the tsc, the same program measured ~1250 ns/event until a reboot
+restored it. `env.txt` records the clocksource with every run for that reason.
+
+Three changes, same machine:
 
 | stopwatch and state read                       | per-event          |
 | ---------------------------------------------- | ------------------ |
 | tid-keyed per-CPU hashmap, probe-read state    | ~630 ns            |
 | single-slot array, in-place counter add        | ~434 ns            |
-| `prev_state` from the tracepoint arg (>= 5.18) | ~393 ns [392, 396] |
+| `prev_state` from the tracepoint arg (>= 5.18) | ~391 ns [390, 393] |
 
-The last two IQRs do not overlap. What is left is the cache-cold `task_struct`
-reads the storm forces. Numbers are machine-specific; re-run for yours.
+The last two IQRs do not overlap. Numbers are machine-specific; re-run for yours.
 
 ## selfcpu: the tool's own cost
 
@@ -267,3 +286,36 @@ meters); these ran defaults at a normalised 1s refresh, and the figure is
 terminal-geometry dependent (render cost scales with visible rows). The jiffy
 resolution (~0.3% per window) separates truetop from the others but is too coarse
 to split the UI from the collector; that needs `perf stat`.
+
+## switch: cost under a context-switch storm
+
+```sh
+cargo xtask bench switch           # wraps: sudo bench/switch/run.sh
+```
+
+selfcpu loads the machine with processes, which is what htop and btop scale with.
+This one loads it with context switches, which is what truetop scales with:
+`stress-ng --switch` drives the rate while few processes exist. Each tool's own
+CPU% comes from `/proc`; for truetop the kernel `sched_switch` cost is added from
+bpf_stats, so its total is user-space plus kernel against htop/btop's user-space.
+
+Reference machine, CPU% of one core:
+
+| ctxt/s | htop | btop | truetop (user + kernel) |
+| -----: | ---: | ---: | ----------------------: |
+|   555k | 3.51 | 0.59 |  **13.7** (0.6 + 13.1)  |
+|  2.59M | 3.55 | 0.88 |  **52.8** (0.6 + 52.2)  |
+|  4.98M | 5.57 | 0.94 | **147.6** (0.7 + 146.9) |
+
+truetop loses here, and by a lot. Its user-space stays flat (~0.6%), but the kernel
+hook runs on every switch, so its total tracks the switch rate; htop and btop do
+not care about the rate at all.
+
+Together with selfcpu that gives the whole trade-off in one line. truetop is
+cheaper than htop while
+
+    context switches/s  <  ~70,000 + 113 x (process count)
+
+A desktop at a few hundred processes and tens of thousands of switches per second
+sits far inside that. A switch-heavy server with few processes does not: there,
+truetop costs more than the tool it replaces.

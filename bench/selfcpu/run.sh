@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 #
 # self-cpu benchmark: each monitor's own CPU% and RSS under a controlled process
-# load, sampled as a distribution (median + IQR). User-space leg only; truetop's
-# total also includes the kernel sched_switch cost (see hotpath). truetop appears
-# twice: with its UI (parity with btop/htop, which render) and headless collector
-# (--bench), so the renderer's share is visible. See ../BENCHMARKS.md.
+# load, sampled as a distribution (median + IQR). User-space cost only; truetop's
+# total also carries the kernel sched_switch cost (see hotpath and switch). truetop
+# appears twice: with its UI (parity with btop/htop, which render) and as the
+# headless collector (--bench), so the renderer's share is visible.
+# See ../BENCHMARKS.md.
 #
 # Quiet machine, on AC (xtask tunes governor/turbo): sudo ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-export TERM="${TERM:-xterm-256color}"          # the TUIs need it; sudo may drop it
+source ../lib.sh
+export TERM="${TERM:-xterm-256color}"
 
 # Windows span several refresh periods so each is a stable average: these are
 # periodic bursty workloads, so sub-refresh windows would just be bimodal.
@@ -27,22 +29,12 @@ mkdir -p "$RESULTS"
 TCK=$(getconf CLK_TCK)
 PAGE=$(getconf PAGESIZE)
 
-for c in script btop htop pgrep getconf; do
-    command -v "$c" >/dev/null || { echo "missing dependency: $c" >&2; exit 1; }
-done
-for b in "$LOAD" "$TRUETOP"; do
-    [[ -x $b ]] || { echo "build first: cargo build --release" >&2; exit 1; }
-done
-[[ $EUID -eq 0 ]] || { echo "run as root (truetop loads eBPF): sudo $0" >&2; exit 1; }
+require script btop htop pgrep getconf
+require_built "$LOAD" "$TRUETOP"
+require_root
+warn_if_not_performance selfcpu
 
-gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true)
-[[ ${gov:-} == performance ]] || echo "warning: governor '${gov:-unknown}' != performance; run via 'cargo xtask bench selfcpu'" >&2
-
-# btop reads its refresh from the config; give it a 1s throwaway one.
-BTOP_HOME=$(mktemp -d)
-mkdir -p "$BTOP_HOME/btop"
-printf 'update_ms = 1000\n' >"$BTOP_HOME/btop/btop.conf"
-
+BTOP_HOME=$(btop_home)
 load_pid=
 wrapper=
 pid=
@@ -53,14 +45,6 @@ cleanup() {
     rm -rf "$BTOP_HOME"
 }
 trap cleanup EXIT
-
-# utime + stime (ticks) of a pid. `stat` fields 14,15 sit at $12,$13 once the
-# parenthesised comm is dropped.
-cpu_ticks() {
-    local rem
-    rem=$(cut -d')' -f2- "/proc/$1/stat" 2>/dev/null) || { echo 0; return; }
-    awk '{print $12 + $13}' <<<"$rem"
-}
 
 rss_mb() {
     local pages
@@ -109,18 +93,9 @@ measure() {
     pid=
     wrapper=
 
-    printf '%s' "$samples" | awk -v warm="$WARMUP" -v label="$label" -v procs="$PROCS" -v rss="$rss" '
-        NF { v[++raw] = $1 }
-        END {
-            n = 0
-            for (i = warm + 1; i <= raw; i++) a[++n] = v[i]
-            if (n == 0) { exit }
-            for (i = 1; i <= n; i++)
-                for (j = i + 1; j <= n; j++)
-                    if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }
-            med = (n % 2) ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2
-            printf "scale,%s,%d,%.2f,%.2f,%.2f,%s\n", label, procs, med, a[int(n * 0.25) + 1], a[int(n * 0.75) + 1], rss
-        }' >>"$OUT"
+    local med p25 p75
+    read -r _ med p25 p75 _ _ <<<"$(printf '%s' "$samples" | iqr_stats)"
+    printf 'scale,%s,%d,%s,%s,%s,%s\n' "$label" "$PROCS" "$med" "$p25" "$p75" "$rss" >>"$OUT"
 }
 
 echo "scenario,tool,procs,cpu_median,cpu_p25,cpu_p75,rss_mb" >"$OUT"

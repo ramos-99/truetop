@@ -18,6 +18,7 @@ mod hotpath;
 mod macro_bench;
 mod micro;
 mod selfcpu;
+mod switch;
 
 use std::{
     path::Path,
@@ -31,7 +32,8 @@ use crate::{
     runner::cargo,
 };
 
-const USAGE: &str = "usage: cargo xtask bench [--no-prep] [micro] [macro] [hotpath] [selfcpu]";
+const USAGE: &str =
+    "usage: cargo xtask bench [--no-prep] [micro] [macro] [hotpath] [selfcpu] [switch]";
 
 #[derive(PartialEq)]
 enum Bench {
@@ -39,6 +41,7 @@ enum Bench {
     Macro,
     Hotpath,
     Selfcpu,
+    Switch,
 }
 
 pub fn bench(args: &[String]) -> Result<()> {
@@ -55,6 +58,7 @@ pub fn bench(args: &[String]) -> Result<()> {
             "macro" => push_unique(&mut picks, Bench::Macro),
             "hotpath" => push_unique(&mut picks, Bench::Hotpath),
             "selfcpu" => push_unique(&mut picks, Bench::Selfcpu),
+            "switch" => push_unique(&mut picks, Bench::Switch),
             other => bail!("unknown argument `{other}`\n{USAGE}"),
         }
     }
@@ -85,6 +89,7 @@ pub fn bench(args: &[String]) -> Result<()> {
             Bench::Macro => macro_bench::run()?,
             Bench::Hotpath => hotpath::run()?,
             Bench::Selfcpu => selfcpu::run()?,
+            Bench::Switch => switch::run()?,
         }
     }
     Ok(())

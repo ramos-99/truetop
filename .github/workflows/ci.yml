@@ -32,6 +32,15 @@ jobs:
 
       - run: cargo clippy --workspace --exclude truetop-ebpf --all-targets -- -D warnings
 
+      # Nothing else compiles the bench scripts, and they share bench/lib.sh, so
+      # a rename there breaks all of them and only a root-only run would notice.
+      - name: bench scripts parse, and lib.sh works
+        run: |
+          bash -n bench/lib.sh bench/*/run.sh
+          source bench/lib.sh
+          [ "$(printf '1\n3\n2\n' | WARMUP=0 iqr_stats)" = "3 2.0 1.0 3.0 1.0 3.0" ]
+          [ "$(printf '' | WARMUP=0 iqr_stats)" = "0 0 0 0 0 0" ]
+
   build-test:
     runs-on: ubuntu-latest
     steps:

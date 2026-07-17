@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 #
-# Hotpath benchmark: sched_switch per-event kernel cost, sampled as a distribution
-# under a sustained hackbench storm (median + spread from bpftool run stats), plus
-# a coarse whole-system overhead. See ../BENCHMARKS.md.
+# Hotpath benchmark: sched_switch per-event kernel cost under a hackbench storm.
+# bpf_stats times the whole invocation; perf's `bpf_prog_*` symbol covers only the
+# program's own code, so the difference is what the helper calls cost. The figure
+# tracks the machine's clocksource, which env.txt records. See ../BENCHMARKS.md.
 #
 # Quiet machine, on AC (xtask tunes governor/turbo): sudo ./run.sh
 set -euo pipefail
 cd "$(dirname "$0")"
+source ../lib.sh
 
 TRUETOP=../../target/release/truetop
 TICKS=120
@@ -15,24 +17,19 @@ LOOPS=5000
 SAMPLES=24
 INTERVAL=0.25
 WARMUP=2
+PERF_SECS=10
+PERF_HZ=999
 RESULTS="$(cd "$(dirname "$0")/.." && pwd)/results"
 mkdir -p "$RESULTS"
+TCK=$(getconf CLK_TCK)
 
-for c in bpftool jq hackbench nproc; do
-    command -v "$c" >/dev/null || { echo "missing dependency: $c" >&2; exit 1; }
-done
-[[ -x $TRUETOP ]] || { echo "build first: cargo build --release" >&2; exit 1; }
-[[ $EUID -eq 0 ]] || { echo "run as root (truetop loads eBPF): sudo $0" >&2; exit 1; }
+require bpftool jq hackbench nproc perf getconf
+require_built "$TRUETOP"
+require_root
+warn_if_not_performance hotpath
 
-gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true)
-[[ ${gov:-} == performance ]] || echo "warning: governor '${gov:-unknown}' != performance; run via 'cargo xtask bench hotpath' for stable numbers" >&2
-
-prog_stats() {
-    bpftool prog show --json 2>/dev/null \
-        | jq -r 'first(.[] | select(.name == "sched_switch"))
-                 | "\(.run_cnt // 0) \(.run_time_ns // 0)"' 2>/dev/null \
-        || echo "0 0"
-}
+# CPU time the kernel accounts as busy, summed over cores, in jiffies.
+busy_jiffies() { awk '/^cpu / { print $2 + $3 + $4 + $7 + $8 + $9 }' /proc/stat; }
 
 hackbench_once() { hackbench --pipe --groups "$GROUPS_N" --loops "$LOOPS" >/dev/null 2>&1 || true; }
 
@@ -81,28 +78,36 @@ for _ in $(seq 1 "$SAMPLES"); do
         awk "BEGIN { printf \"%.1f\n\", $dn / $dc }" >> "$samples"
     fi
 done
-
-stats=$(awk -v warm="$WARMUP" '
-    { v[NR] = $1 }
-    END {
-        n = 0
-        for (i = warm + 1; i <= NR; i++) a[++n] = v[i]
-        if (n == 0) { print "n/a n/a n/a n/a n/a n/a"; exit }
-        for (i = 1; i <= n; i++)
-            for (j = i + 1; j <= n; j++)
-                if (a[j] < a[i]) { t = a[i]; a[i] = a[j]; a[j] = t }
-        med = (n % 2) ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2
-        printf "%d %.1f %.1f %.1f %.1f %.1f", n, med, a[int(n * 0.25) + 1], a[int(n * 0.75) + 1], a[1], a[n]
-    }' "$samples")
+read -r n med p25 p75 lo hi <<<"$(iqr_stats <"$samples")"
 rm -f "$samples"
 
-read -r n med p25 p75 lo hi <<<"$stats"
+echo "== perf cross-check (${PERF_SECS}s) ==" >&2
+perf_data=$(mktemp)
+b0=$(busy_jiffies)
+read -r pc0 _ <<<"$(prog_stats)"
+perf record -a -q -e cycles -F "$PERF_HZ" -o "$perf_data" -- sleep "$PERF_SECS" >/dev/null 2>&1 || true
+b1=$(busy_jiffies)
+read -r pc1 _ <<<"$(prog_stats)"
+
+read -r perf_total perf_prog <<<"$(perf script -i "$perf_data" 2>/dev/null \
+    | awk '/bpf_prog_[0-9a-f]*_sched_switch/ { p++ } END { print NR, p + 0 }')"
+rm -f "$perf_data"
+
+perf_ns=$(awk "BEGIN {
+    events = $pc1 - $pc0
+    if (events <= 0 || $perf_total <= 0) { print 0; exit }
+    printf \"%.1f\", ($perf_prog / $perf_total) * (($b1 - $b0) / $TCK) / events * 1e9
+}")
+perf_share=$(awk "BEGIN { if ($perf_total > 0) printf \"%.2f\", $perf_prog / $perf_total * 100; else print 0 }")
+helpers_ns=$(awk "BEGIN { printf \"%.1f\", $med - $perf_ns }")
 overhead=$(awk "BEGIN { printf \"%+.0f\", ($with - $baseline) / $baseline * 100 }")
 
 printf '\n'
 {
-    printf 'per-event kernel cost (median) : %s ns  (n=%s)\n' "$med" "$n"
-    printf 'per-event IQR  [p25, p75]      : [%s, %s] ns\n' "$p25" "$p75"
-    printf 'per-event range [min, max]     : [%s, %s] ns\n' "$lo" "$hi"
+    printf 'per-event total (bpf_stats)    : %s ns  (median, n=%s, IQR [%s, %s], range [%s, %s])\n' \
+        "$med" "$n" "$p25" "$p75" "$lo" "$hi"
+    printf '  program code (perf)          : %s ns  (%s%% of busy cycles, %s samples)\n' \
+        "$perf_ns" "$perf_share" "$perf_total"
+    printf '  helper calls (difference)    : %s ns  (ktime, probe reads, map ops)\n' "$helpers_ns"
     printf 'coarse storm overhead (o.o.m.) : ~%s%% (%s s -> %s s)\n' "$overhead" "$baseline" "$with"
 } | tee "$RESULTS/hotpath.txt"

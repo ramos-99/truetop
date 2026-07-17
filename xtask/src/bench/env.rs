@@ -29,10 +29,19 @@ pub fn write_env(results: &Path) {
             .unwrap_or_default(),
     );
     line("governor:", current_governor().unwrap_or_default());
+    // bpf_ktime_get_ns runs once per event, so hpet vs tsc swings it 3x.
+    line("clock:", clocksource());
 
     if std::fs::write(results.join("env.txt"), out).is_err() {
         eprintln!("could not write env.txt");
     }
+}
+
+/// The kernel's current clocksource, or empty if unavailable.
+fn clocksource() -> String {
+    std::fs::read_to_string("/sys/devices/system/clocksource/clocksource0/current_clocksource")
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default()
 }
 
 /// First `model name` from `/proc/cpuinfo`, or empty if unavailable.
