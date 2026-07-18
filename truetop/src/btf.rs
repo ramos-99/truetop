@@ -6,6 +6,8 @@
 //! and injected into the program at load (see `main`), so one binary adapts to
 //! any kernel version/arch - each machine ships the BTF for its own layout.
 
+use std::path::Path;
+
 use anyhow::{Context as _, Result, bail};
 
 const VMLINUX_BTF: &str = "/sys/kernel/btf/vmlinux";
@@ -48,9 +50,18 @@ struct Btf {
 
 impl Btf {
     fn load() -> Result<Self> {
-        let data = std::fs::read(VMLINUX_BTF)
-            .with_context(|| format!("reading {VMLINUX_BTF} (CONFIG_DEBUG_INFO_BTF required)"))?;
-        Self::from_bytes(data).with_context(|| format!("parsing {VMLINUX_BTF}"))
+        Self::load_from(Path::new(VMLINUX_BTF))
+    }
+
+    fn load_from(path: &Path) -> Result<Self> {
+        let data = std::fs::read(path).with_context(|| {
+            format!(
+                "kernel BTF at {} is unavailable; the kernel needs \
+                 CONFIG_DEBUG_INFO_BTF=y (>= 5.10)",
+                path.display()
+            )
+        })?;
+        Self::from_bytes(data).with_context(|| format!("parsing {}", path.display()))
     }
 
     fn from_bytes(data: Vec<u8>) -> Result<Self> {
@@ -274,6 +285,22 @@ mod tests {
     fn unknown_struct_is_error() {
         let btf = Btf::from_bytes(sample_btf(true)).unwrap();
         assert!(btf.field_offset("missing", "pid").is_err());
+    }
+
+    #[test]
+    fn missing_btf_names_the_kernel_config() {
+        // A path under the OS temp dir that we never create: absent by construction,
+        // unique per process so parallel test binaries don't collide.
+        let absent =
+            std::env::temp_dir().join(format!("truetop-absent-btf-{}", std::process::id()));
+        let err = match Btf::load_from(&absent) {
+            Ok(_) => panic!("load_from an absent path must fail"),
+            Err(err) => err,
+        };
+        assert!(
+            format!("{err:#}").contains("CONFIG_DEBUG_INFO_BTF"),
+            "expected the config remediation, got: {err:#}"
+        );
     }
 
     // BTF for `typedef void (*btf_trace_sched_switch)(...)` whose prototype has
