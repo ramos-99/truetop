@@ -39,7 +39,7 @@ pub async fn run() -> anyhow::Result<()> {
     env_logger::init();
     raise_memlock();
 
-    let (ebpf, collector) = attach()?;
+    let (ebpf, collector) = attach().map_err(diagnose)?;
 
     match bench_ticks() {
         Some(ticks) => backend::run_headless(collector, ticks),
@@ -71,6 +71,28 @@ pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
     let mut ebpf = load_ebpf()?;
     let collector = setup_collector(&mut ebpf)?;
     Ok((ebpf, collector))
+}
+
+const PRIVILEGE_HINT: &str = "truetop loads eBPF, which needs privilege: run it as root (sudo truetop), or \
+     grant the binary CAP_BPF and CAP_PERFMON";
+
+/// Prepend an actionable hint to an attach failure the user is likely to hit;
+/// anything unrecognised keeps its own error chain untouched.
+fn diagnose(err: anyhow::Error) -> anyhow::Error {
+    match privilege_hint(&err) {
+        Some(hint) => err.context(hint),
+        None => err,
+    }
+}
+
+/// The privilege hint when the failure is a permission error anywhere in the
+/// chain (aya surfaces the load EPERM as an `io::Error` source), else `None`.
+fn privilege_hint(err: &anyhow::Error) -> Option<&'static str> {
+    err.chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .find_map(|io| {
+            (io.kind() == std::io::ErrorKind::PermissionDenied).then_some(PRIVILEGE_HINT)
+        })
 }
 
 /// Load the eBPF object, resolving task_struct field offsets from the live
@@ -206,5 +228,27 @@ async fn wait_for_shutdown_signal() {
     #[cfg(not(unix))]
     {
         let _ = signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Error, ErrorKind};
+
+    use super::{PRIVILEGE_HINT, privilege_hint};
+
+    #[test]
+    fn permission_denied_anywhere_in_the_chain_hints_privilege() {
+        // aya surfaces a load EPERM as an io::Error source under its own context.
+        let err = anyhow::Error::new(Error::from(ErrorKind::PermissionDenied))
+            .context("loading eBPF object");
+        assert_eq!(privilege_hint(&err), Some(PRIVILEGE_HINT));
+    }
+
+    #[test]
+    fn unrelated_failures_are_left_alone() {
+        assert_eq!(privilege_hint(&anyhow::anyhow!("COMM_MAP not found")), None);
+        let missing = anyhow::Error::new(Error::from(ErrorKind::NotFound));
+        assert_eq!(privilege_hint(&missing), None);
     }
 }
