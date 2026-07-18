@@ -246,6 +246,13 @@ Four changes, same machine:
 Each step's A/B had non-overlapping IQRs. Numbers are machine-specific; re-run for
 yours.
 
+One change we did not make: raising the minimum kernel would let the one global map
+on this path move to task-local storage, but perf prices that map's lookup at a
+fraction of a percent of storm cycles, ~5% of the per-event cost after the
+replacement's own overhead. Not worth dropping 5.10 support. A later version can
+detect the kernel at load and take the faster path where it exists, giving 5.15+
+users the win, once the VM matrix in CI can test both paths.
+
 ## selfcpu: the tool's own cost
 
 ```sh
