@@ -16,8 +16,8 @@ Reference machine: AMD Ryzen 7 5800HS, 16 cores. Details and caveats below.
 | per-process collection work         | **~30 ns**            | ~12 µs (procfs)       |
 
 *Exclusive:* per-process D-state I/O wait, which none of them show. *Cost:* the
-kernel `sched_switch` hook runs on every context switch (~200-400 ns each), so
-truetop is cheaper than htop only while switches/s < ~70,000 + 113 x processes; a
+kernel `sched_switch` hook runs on every context switch (~200-350 ns each), so
+truetop is cheaper than htop only while switches/s < ~80,000 + 130 x processes; a
 switch-heavy machine with few processes costs more, not less. RSS is a higher but
 flat ~20 MiB floor.
 
@@ -105,11 +105,6 @@ Package names vary; the table above is the source of truth for what must be on
 | **selfcpu** | the tool's own CPU% and RSS       | sample `/proc` vs btop / htop     | `cargo xtask bench selfcpu` |
 | **switch**  | that cost under a switch storm    | `stress-ng --switch` vs btop / htop | `cargo xtask bench switch` |
 
-micro is the per-process cost, macro is how it adds up across processes, hotpath is
-the kernel-side cost the first two ignore, selfcpu is what the running tool burns
-against btop / htop as processes grow, and switch is the same against the context-
-switch rate, which is the axis truetop loses on.
-
 ## micro: per-process work
 
 ```sh
@@ -138,11 +133,6 @@ regenerate them for yours; the shape holds.
 case for procfs. The macro benchmark reads N distinct files, so the real gap is
 wider. What the collector actually issues per tick (`batch::BatchReader`) is
 measured in the macro benchmark below.
-
-`cargo xtask bench micro` wipes `bench/results/criterion` and runs under the performance
-governor, so each run starts from a clean baseline. Running `cargo bench` directly
-skips that, and a busy machine then prints spurious regressed and improved lines
-against a stale baseline.
 
 ## macro: versus top and htop
 
@@ -229,30 +219,32 @@ wall-clock overhead is a difference of two noisy runs, so it is order of magnitu
 only.
 
 Reference machine (Ryzen 7 5800HS, 16 cores, turbo off, `tsc` clocksource), under
-`hackbench`: **~391 ns/event**, IQR [390, 393] (n=22), whole-system overhead
-single-digit percent. Of that, ~112 ns is the program's own code; the other ~279 ns
-(71%) is helper calls: the clock read, the `task_struct` probe reads, and the map
-operations.
+`hackbench`: **~335 ns/event**, IQR [333, 337] (n=22), whole-system overhead
+single-digit percent. perf puts about a quarter of that in the program's own code
+and the rest in helper calls: the clock read, the `task_struct` probe reads, and
+the map operations. The total is the reliable figure; the split is a sampling
+estimate that moves a few tens of ns between runs.
 
 It is not one number. It tracks cache locality, because the probe reads dominate:
-hackbench churns 640 distinct tasks and costs ~391 ns/event, while
-`stress-ng --switch` alternates between few hot ones and costs ~200 ns. Read it as
-**200-400 ns, depending on how many distinct tasks are switching**.
+hackbench churns 640 distinct tasks and costs ~335 ns/event, while
+`stress-ng --switch` alternates between few hot ones and costs ~190 ns. Read it as
+**roughly 200-350 ns, depending on how many distinct tasks are switching**.
 
 It also tracks the machine's clocksource, since `bpf_ktime_get_ns` runs once per
-event: a `tsc` read is ~20 ns, an `hpet` read is ~1 µs. When this machine's kernel
-watchdog demoted the tsc, the same program measured ~1250 ns/event until a reboot
-restored it. `env.txt` records the clocksource with every run for that reason.
+event: a `tsc` read is ~20 ns, an `hpet` one ~1 µs, which roughly triples the
+per-event cost. `env.txt` records the clocksource with every run for that reason.
 
-Three changes, same machine:
+Four changes, same machine:
 
-| stopwatch and state read                       | per-event          |
-| ---------------------------------------------- | ------------------ |
-| tid-keyed per-CPU hashmap, probe-read state    | ~630 ns            |
-| single-slot array, in-place counter add        | ~434 ns            |
-| `prev_state` from the tracepoint arg (>= 5.18) | ~391 ns [390, 393] |
+| stopwatch, state read, prev ids                 | per-event          |
+| ----------------------------------------------- | ------------------ |
+| tid-keyed per-CPU hashmap, probe-read state     | ~630 ns            |
+| single-slot array, in-place counter add         | ~434 ns            |
+| `prev_state` from the tracepoint arg (>= 5.18)  | ~391 ns            |
+| `bpf_get_current_pid_tgid` for prev's ids       | ~335 ns [333, 337] |
 
-The last two IQRs do not overlap. Numbers are machine-specific; re-run for yours.
+Each step's A/B had non-overlapping IQRs. Numbers are machine-specific; re-run for
+yours.
 
 ## selfcpu: the tool's own cost
 
@@ -303,9 +295,9 @@ Reference machine, CPU% of one core:
 
 | ctxt/s | htop | btop | truetop (user + kernel) |
 | -----: | ---: | ---: | ----------------------: |
-|   555k | 3.51 | 0.59 |  **13.7** (0.6 + 13.1)  |
-|  2.59M | 3.55 | 0.88 |  **52.8** (0.6 + 52.2)  |
-|  4.98M | 5.57 | 0.94 | **147.6** (0.7 + 146.9) |
+|   661k | 3.80 | 0.90 |  **11.5** (0.6 + 10.9)  |
+|  2.09M | 3.90 | 0.60 |  **43.1** (0.6 + 42.5)  |
+|  4.84M | 5.10 | 1.00 | **124.4** (0.9 + 123.5) |
 
 truetop loses here, and by a lot. Its user-space stays flat (~0.6%), but the kernel
 hook runs on every switch, so its total tracks the switch rate; htop and btop do
@@ -314,7 +306,7 @@ not care about the rate at all.
 Together with selfcpu that gives the whole trade-off in one line. truetop is
 cheaper than htop while
 
-    context switches/s  <  ~70,000 + 113 x (process count)
+    context switches/s  <  ~80,000 + 130 x (process count)
 
 A desktop at a few hundred processes and tens of thousands of switches per second
 sits far inside that. A switch-heavy server with few processes does not: there,

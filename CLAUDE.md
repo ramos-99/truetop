@@ -124,15 +124,18 @@ Dual-thread model with atomic pointer swap for zero-lock reads.
 
 `sched_switch` fires on every context switch. On busy systems this can reach
 hundreds of thousands of events per second. The per-event cost is O(1) and
-sub-microsecond - measured at a median ~393 ns under a `hackbench` context-switch
-storm (hotpath benchmark, turbo off), not assumed - so total overhead scales with
-the context-switch rate, not the process count: single-digit percent under that
-storm, well under 1% in normal use, but **not zero**. The README must document
-this trade-off explicitly to avoid claims that will be challenged and disproven.
+sub-microsecond - measured at a median ~335 ns under a `hackbench` context-switch
+storm (hotpath benchmark, turbo off, `tsc` clocksource), not assumed - so total
+overhead scales with the context-switch rate, not the process count: single-digit
+percent under that storm, well under 1% in normal use, but **not zero**. The cost
+also tracks the clocksource, since `bpf_ktime_get_ns` runs per event: on `hpet` it
+roughly triples. The README must document these trade-offs explicitly to avoid
+claims that will be challenged and disproven.
 
-The I/O-wait extension adds one probe-read (`prev->state`) and one lock-free
-map lookup per event; any change to the hotpath must be re-measured with the
-hotpath benchmark before the numbers above are quoted.
+The I/O-wait extension reads `prev`'s state (the tracepoint arg from 5.18, else a
+probe-read) and does one lock-free map lookup per event; perf prices that lookup at
+a fraction of a percent of storm cycles. Any change to the hotpath must be
+re-measured with the hotpath benchmark before the numbers above are quoted.
 
 ---
 
