@@ -1,8 +1,15 @@
 name: vm-matrix
 
 # Live-kernel integration tests across kernel versions, in a VM. Heavier and
-# newer than the single-kernel run in ci.yml, so it is opt-in and scheduled, not
-# a gate on every push, until it has proven stable.
+# newer than the single-kernel run in ci.yml, so it stays dispatch/scheduled and
+# is not wired into the required `check` gate until it has proven stable across a
+# few green runs.
+#
+# We drive the vmtest CLI directly rather than danobi/vmtest-action: the action
+# wraps a deprecated Node runtime, whereas the CLI is a plain `run:` step we can
+# pin to an exact release (supply-chain) and is the same engine aya's own runner
+# uses. vmtest orchestrates qemu on the host and maps this filesystem into the
+# guest, so the VM only re-runs the binaries we already built on the host.
 on:
   workflow_dispatch:
   schedule:
@@ -10,6 +17,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pin vmtest so a new CLI release can't silently change how the VM boots.
+  VMTEST_VERSION: "0.18.0"
 
 permissions: {}
 
@@ -35,14 +44,23 @@ jobs:
 
       - run: cargo install bpf-linker --locked
 
+      # vmtest runs qemu on the host, so qemu must be present; the CLI itself is
+      # version-pinned and cached with the rest of the Rust tooling.
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86
+      - run: cargo install vmtest --version "${VMTEST_VERSION}" --locked
+
       # Build the eBPF object and the integration-test binaries on the host, so
       # the VM only runs them under the matrix kernel.
       - run: cargo test -p truetop --no-run
 
-      # vmtest boots the matrix kernel with this same filesystem, so xtask finds
-      # the built binaries and runs them. The VM is root, so xtask runs them
-      # directly (see xtask::privilege), no sudo needed.
-      - uses: danobi/vmtest-action@master
-        with:
-          kernel_url: https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}
-          command: cargo xtask test
+      - name: Fetch the matrix kernel
+        run: |
+          curl -fL -o bzImage \
+            "https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}"
+
+      # vmtest boots that kernel with this same filesystem, running the command in
+      # this directory. The VM is root, so xtask runs the prebuilt binaries
+      # directly (see xtask::privilege), no sudo needed. The host PATH is injected
+      # so the guest shell finds the cargo the runner installed.
+      - name: Integration tests under the matrix kernel
+        run: vmtest -k bzImage "export PATH='${PATH}' && cargo xtask test"
