@@ -3,9 +3,9 @@
 
 use anyhow::Result;
 
-use super::sudo_script;
+use super::root_script;
 
 pub(super) fn run() -> Result<()> {
     eprintln!("== switch ==");
-    sudo_script("bench/switch/run.sh")
+    root_script("bench/switch/run.sh")
 }

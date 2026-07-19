@@ -4,11 +4,11 @@ use std::process::Command;
 
 use anyhow::Result;
 
-use super::{exec, root, sudo_script};
+use super::{exec, root, root_script};
 
 pub(super) fn run() -> Result<()> {
     eprintln!("== macro ==");
-    sudo_script("bench/macro/run.sh")?;
+    root_script("bench/macro/run.sh")?;
     if exec(&mut Command::new(root().join("bench/macro/plot.py"))).is_err() {
         eprintln!("macro: plot skipped (needs python + matplotlib)");
     }

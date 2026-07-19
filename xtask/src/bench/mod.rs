@@ -113,9 +113,9 @@ pub(super) fn results_dir() -> std::path::PathBuf {
     root().join("bench/results")
 }
 
-/// Run a benchmark's root script under sudo (eBPF and strace need it).
-pub(super) fn sudo_script(rel: &str) -> Result<()> {
-    exec(Command::new("sudo").arg("bash").arg(root().join(rel))).with_context(|| rel.to_owned())
+/// Run a benchmark's root script (eBPF and strace need it), elevating if needed.
+pub(super) fn root_script(rel: &str) -> Result<()> {
+    exec(crate::privilege::as_root("bash").arg(root().join(rel))).with_context(|| rel.to_owned())
 }
 
 pub(super) fn exec(cmd: &mut Command) -> Result<()> {

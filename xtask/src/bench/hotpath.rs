@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 
-use super::sudo_script;
+use super::root_script;
 
 pub(super) fn run() -> Result<()> {
     eprintln!("== hotpath ==");
-    sudo_script("bench/hotpath/run.sh")
+    root_script("bench/hotpath/run.sh")
 }

@@ -4,11 +4,11 @@ use std::process::Command;
 
 use anyhow::Result;
 
-use super::{exec, root, sudo_script};
+use super::{exec, root, root_script};
 
 pub(super) fn run() -> Result<()> {
     eprintln!("== self-cpu ==");
-    sudo_script("bench/selfcpu/run.sh")?;
+    root_script("bench/selfcpu/run.sh")?;
     if exec(&mut Command::new(root().join("bench/selfcpu/plot.py"))).is_err() {
         eprintln!("self-cpu: plot skipped (needs python + matplotlib)");
     }

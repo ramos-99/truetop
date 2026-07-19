@@ -5,11 +5,13 @@ use std::process::{Command, Stdio};
 use anyhow::{Context as _, Result, bail};
 use cargo_metadata::{Message, camino::Utf8PathBuf};
 
-/// Build truetop and run the binary under sudo, forwarding any extra arguments.
+use crate::privilege::as_root;
+
+/// Build truetop and run the binary as root, forwarding any extra arguments.
 pub fn run(extra: &[String]) -> Result<()> {
     let bin = build_bin()?;
     let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
-    sudo(bin.as_str(), &extra)
+    run_as_root(bin.as_str(), &extra)
 }
 
 /// Build the integration tests and run each as root with `--ignored`.
@@ -19,7 +21,7 @@ pub fn test() -> Result<()> {
         bail!("no integration test binaries were built");
     }
     for bin in bins {
-        sudo(bin.as_str(), &["--ignored", "--test-threads=1"])?;
+        run_as_root(bin.as_str(), &["--ignored", "--test-threads=1"])?;
     }
     Ok(())
 }
@@ -67,13 +69,11 @@ fn executables(args: &[&str], kind: &str, name: Option<&str>) -> Result<Vec<Utf8
     Ok(bins)
 }
 
-fn sudo(bin: &str, args: &[&str]) -> Result<()> {
-    let status = Command::new("sudo")
-        .arg("-E")
-        .arg(bin)
+fn run_as_root(bin: &str, args: &[&str]) -> Result<()> {
+    let status = as_root(bin)
         .args(args)
         .status()
-        .context("spawning sudo")?;
+        .context("spawning test binary")?;
     if !status.success() {
         bail!("{bin} exited unsuccessfully");
     }

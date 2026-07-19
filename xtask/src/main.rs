@@ -9,6 +9,7 @@
 
 mod bench;
 mod btf_fixtures;
+mod privilege;
 mod runner;
 
 use anyhow::{Result, bail};

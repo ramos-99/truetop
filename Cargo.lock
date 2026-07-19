@@ -2698,6 +2698,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
+ "libc",
  "sha2 0.11.0",
  "ureq",
 ]
