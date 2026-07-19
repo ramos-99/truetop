@@ -45,9 +45,10 @@ jobs:
 
       - run: cargo install bpf-linker --locked
 
-      # vmtest runs qemu on the host, so qemu must be present; the CLI itself is
-      # version-pinned and cached with the rest of the Rust tooling.
-      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86
+      # vmtest runs qemu on the host and talks to the guest over qemu-ga, which
+      # the guest runs from this same host filesystem - so both packages must be
+      # on the host. The CLI itself is version-pinned and cached with the tooling.
+      - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 qemu-guest-agent
       - run: cargo install vmtest --version "${VMTEST_VERSION}" --locked
 
       # The runner exposes /dev/kvm but restricts it to the kvm group, which the
