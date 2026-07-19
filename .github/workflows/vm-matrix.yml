@@ -1,0 +1,48 @@
+name: vm-matrix
+
+# Live-kernel integration tests across kernel versions, in a VM. Heavier and
+# newer than the single-kernel run in ci.yml, so it is opt-in and scheduled, not
+# a gate on every push, until it has proven stable.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions: {}
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # danobi/vmtest test_assets kernels. The 5.10 floor and arm64 need images
+        # we build or host ourselves - follow-up.
+        kernel: ["5.15", "6.2"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo install bpf-linker --locked
+
+      # Build the eBPF object and the integration-test binaries on the host, so
+      # the VM only runs them under the matrix kernel.
+      - run: cargo test -p truetop --no-run
+
+      # vmtest boots the matrix kernel with this same filesystem, so xtask finds
+      # the built binaries and runs them. The VM is root, so xtask runs them
+      # directly (see xtask::privilege), no sudo needed.
+      - uses: danobi/vmtest-action@master
+        with:
+          kernel_url: https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}
+          command: cargo xtask test
