@@ -28,10 +28,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # danobi/vmtest test_assets ship bzImage-v<ver>-default for 5.15..6.18.
-        # The 5.10 floor and arm64 need images we build or host ourselves - the
-        # `state` (pre-5.14) field path is only exercised there, follow-up.
-        kernel: ["5.15", "6.2"]
+        # danobi/vmtest test_assets ship bzImage-v<ver>-<variant> for 5.15..6.18.
+        # Only the archlinux/fedora38 variants carry BTF (the -default config
+        # omits it), and truetop requires BTF, so we sweep those two distro
+        # configs across the range. The 5.10 floor, arm64, and other distros need
+        # images we host ourselves - follow-up; the `state` (pre-5.14) field path
+        # is only exercised on that floor.
+        kernel: ["5.15", "6.0", "6.1", "6.2", "6.6", "6.12", "6.18"]
+        variant: ["archlinux", "fedora38"]
     steps:
       - uses: actions/checkout@v6
 
@@ -72,7 +76,7 @@ jobs:
       - name: Fetch the matrix kernel
         run: |
           curl -fL -o bzImage \
-            "https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}-default"
+            "https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}-${{ matrix.variant }}"
 
       # vmtest boots that kernel with this same filesystem, running the command in
       # this directory. The VM is root, so xtask runs the prebuilt binaries
