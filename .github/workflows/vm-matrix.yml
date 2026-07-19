@@ -50,6 +50,16 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y qemu-system-x86
       - run: cargo install vmtest --version "${VMTEST_VERSION}" --locked
 
+      # The runner exposes /dev/kvm but restricts it to the kvm group, which the
+      # runner user is not in, so qemu can't init KVM. Open the device so vmtest
+      # boots with hardware acceleration instead of falling over.
+      - name: Grant access to /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       # Build the eBPF object and the integration-test binaries on the host, so
       # the VM only runs them under the matrix kernel.
       - run: cargo test -p truetop --no-run
