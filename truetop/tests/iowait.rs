@@ -1,8 +1,14 @@
-//! End-to-end I/O wait against the kernel's own accounting: a thread does
-//! O_DIRECT reads (real, uncached device I/O → uninterruptible sleep), and
+//! I/O-wait integration tests, run by `cargo xtask test` (root + a live kernel).
+//!
+//! `io_wait_tracks_kernel_blkio_delay` - the end-to-end oracle: a thread does
+//! O_DIRECT reads (real, uncached device I/O → uninterruptible sleep) and
 //! truetop's IO% must track the block-I/O delay the kernel records in
-//! `/proc/<pid>/stat` (`delayacct_blkio_ticks`, the source iotop reads).
-//! Run: `cargo xtask test`.
+//! `/proc/<pid>/stat` (`delayacct_blkio_ticks`, the source iotop reads). It needs
+//! a real block device, so it skips where there is none.
+//!
+//! `attaches_and_collects_on_this_kernel` - the cross-kernel smoke the vmtest
+//! matrix runs on every kernel and distro: no device needed, it proves truetop
+//! loads, attaches, and collects across the CO-RE and tracepoint ABI surface.
 
 use std::{
     fs,
@@ -96,11 +102,38 @@ fn clk_tck() -> f64 {
     if hz > 0 { hz as f64 } else { 100.0 }
 }
 
+/// Whether `path` is on a block-backed filesystem; tmpfs and the vmtest 9p
+/// rootfs are not, and cannot produce the block I/O the oracle measures.
+fn is_block_backed(path: &Path) -> Result<bool> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    const TMPFS_MAGIC: i64 = 0x0102_1994;
+    const V9FS_MAGIC: i64 = 0x0102_1997;
+
+    let cpath = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+    // SAFETY: statfs fills a zeroed buffer given a valid NUL-terminated path.
+    let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(cpath.as_ptr(), &mut buf) } != 0 {
+        bail!(
+            "statfs {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        );
+    }
+    Ok(!matches!(buf.f_type, TMPFS_MAGIC | V9FS_MAGIC))
+}
+
 #[test]
 #[ignore = "needs root + a live kernel; run: cargo xtask test"]
 fn io_wait_tracks_kernel_blkio_delay() -> Result<()> {
     // The oracle: enable delay accounting (off by default since 5.14).
     let _ = fs::write("/proc/sys/kernel/task_delayacct", "1");
+
+    // Needs a real block device; the smoke test covers device-less kernels.
+    if !is_block_backed(Path::new("."))? {
+        eprintln!("io_wait: skipping, cwd is not on a block-backed filesystem");
+        return Ok(());
+    }
 
     let (_ebpf, mut collector) = attach()?;
     let scratch = Scratch::create()?;
@@ -143,6 +176,31 @@ fn io_wait_tracks_kernel_blkio_delay() -> Result<()> {
     assert!(
         (truetop - kernel).abs() < 0.5,
         "truetop {truetop:.2} vs kernel blkio {kernel:.2}"
+    );
+    Ok(())
+}
+
+/// Cross-kernel smoke: truetop loads, attaches, and collects on this kernel -
+/// what the vmtest matrix checks on every kernel/distro. No block device needed.
+#[test]
+#[ignore = "needs root + a live kernel; run: cargo xtask test"]
+fn attaches_and_collects_on_this_kernel() -> Result<()> {
+    let (_ebpf, mut collector) = attach()?;
+    let me = std::process::id();
+
+    // Seed deltas, burn a little CPU so this process is scheduled with recorded
+    // time, then sample - it must then see itself.
+    collector.tick();
+    let mut x = 0u64;
+    for i in 0..100_000_000u64 {
+        x = x.wrapping_add(i.rotate_left(3));
+    }
+    std::hint::black_box(x);
+    let snapshot = collector.tick();
+
+    assert!(
+        snapshot.processes.iter().any(|p| p.pid == me),
+        "truetop did not see its own process ({me}) after attaching"
     );
     Ok(())
 }
