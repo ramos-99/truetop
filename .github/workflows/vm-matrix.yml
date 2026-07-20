@@ -78,10 +78,11 @@ jobs:
           curl -fL -o bzImage \
             "https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}-${{ matrix.variant }}"
 
-      # vmtest boots that kernel with this same filesystem, running the command in
-      # this directory. The VM is root, so xtask runs the prebuilt binaries
-      # directly (see xtask::privilege), no sudo needed. The host PATH is injected
-      # so the guest shell finds the cargo the runner installed, and cargo is
-      # forced offline because the guest has no network - it reuses the host cache.
-      - name: Integration tests under the matrix kernel
-        run: vmtest -k bzImage "export PATH='${PATH}' CARGO_NET_OFFLINE=true && cargo xtask test"
+      # vmtest boots that kernel with this same filesystem and runs the
+      # cross-kernel smoke suite (the oracles need a real block device and faithful
+      # timing, so they stay on the host). The VM is root, so xtask runs the
+      # prebuilt binary directly (see xtask::privilege); the host PATH is injected
+      # so the guest finds cargo, and cargo is forced offline as the guest has no
+      # network - it reuses the host cache.
+      - name: Cross-kernel smoke under the matrix kernel
+        run: vmtest -k bzImage "export PATH='${PATH}' CARGO_NET_OFFLINE=true && cargo xtask test cross_kernel"

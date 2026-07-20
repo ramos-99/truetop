@@ -14,9 +14,15 @@ pub fn run(extra: &[String]) -> Result<()> {
     run_as_root(bin.as_str(), &extra)
 }
 
-/// Build the integration tests and run each as root with `--ignored`.
-pub fn test() -> Result<()> {
-    let bins = executables(&["test", "-p", "truetop", "--no-run"], "test", None)?;
+/// Build the integration tests and run each as root with `--ignored`. An optional
+/// argument selects a single test target: `cargo xtask test cross_kernel`.
+pub fn test(filter: &[String]) -> Result<()> {
+    let mut args = vec!["test", "-p", "truetop"];
+    if let Some(target) = filter.first() {
+        args.extend(["--test", target.as_str()]);
+    }
+    args.push("--no-run");
+    let bins = executables(&args, "test", None)?;
     if bins.is_empty() {
         bail!("no integration test binaries were built");
     }

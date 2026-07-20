@@ -3,7 +3,7 @@
 //! `cargo test` under sudo.
 //!
 //!   cargo xtask run [args...]         build truetop and run it as root
-//!   cargo xtask test                  run the eBPF integration tests as root
+//!   cargo xtask test [target]         run the eBPF integration tests as root
 //!   cargo xtask bench [names...]      run the benchmarks (all, or a subset)
 //!   cargo xtask update-btf-fixtures   refresh the BTF test fixtures
 
@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("run") => runner::run(&args[1..]),
-        Some("test") => runner::test(),
+        Some("test") => runner::test(&args[1..]),
         Some("bench") => bench::bench(&args[1..]),
         Some("update-btf-fixtures") => btf_fixtures::update(),
         _ => bail!("usage: cargo xtask <run | test | bench | update-btf-fixtures> [args...]"),
