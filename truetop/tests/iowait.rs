@@ -102,31 +102,23 @@ fn clk_tck() -> f64 {
     if hz > 0 { hz as f64 } else { 100.0 }
 }
 
-/// Whether `path` is on a real block-backed filesystem. The oracle needs one;
-/// the vmtest rootfs (9p or virtiofs) and tmpfs are not. Allowlist the common
-/// on-disk filesystems - anything else means skip.
+/// Whether `path` is on a real block device. Virtual filesystems - tmpfs, and the
+/// vmtest 9p/virtiofs rootfs - get an anonymous device (major 0) and cannot do
+/// block I/O. (statfs f_type is unreliable: virtiofs passes the host's through.)
 fn is_block_backed(path: &Path) -> Result<bool> {
     use std::os::unix::ffi::OsStrExt as _;
 
-    const EXT_MAGIC: i64 = 0xEF53; // ext2/3/4
-    const XFS_MAGIC: i64 = 0x5846_5342;
-    const BTRFS_MAGIC: i64 = 0x9123_683E;
-    const F2FS_MAGIC: i64 = 0xF2F5_2010;
-
     let cpath = std::ffi::CString::new(path.as_os_str().as_bytes())?;
-    // SAFETY: statfs fills a zeroed buffer given a valid NUL-terminated path.
-    let mut buf: libc::statfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statfs(cpath.as_ptr(), &mut buf) } != 0 {
+    // SAFETY: stat fills a zeroed buffer given a valid NUL-terminated path.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::stat(cpath.as_ptr(), &mut st) } != 0 {
         bail!(
-            "statfs {}: {}",
+            "stat {}: {}",
             path.display(),
             std::io::Error::last_os_error()
         );
     }
-    Ok(matches!(
-        buf.f_type,
-        EXT_MAGIC | XFS_MAGIC | BTRFS_MAGIC | F2FS_MAGIC
-    ))
+    Ok(libc::major(st.st_dev) != 0)
 }
 
 #[test]
