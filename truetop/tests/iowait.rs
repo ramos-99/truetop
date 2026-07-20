@@ -102,13 +102,16 @@ fn clk_tck() -> f64 {
     if hz > 0 { hz as f64 } else { 100.0 }
 }
 
-/// Whether `path` is on a block-backed filesystem; tmpfs and the vmtest 9p
-/// rootfs are not, and cannot produce the block I/O the oracle measures.
+/// Whether `path` is on a real block-backed filesystem. The oracle needs one;
+/// the vmtest rootfs (9p or virtiofs) and tmpfs are not. Allowlist the common
+/// on-disk filesystems - anything else means skip.
 fn is_block_backed(path: &Path) -> Result<bool> {
     use std::os::unix::ffi::OsStrExt as _;
 
-    const TMPFS_MAGIC: i64 = 0x0102_1994;
-    const V9FS_MAGIC: i64 = 0x0102_1997;
+    const EXT_MAGIC: i64 = 0xEF53; // ext2/3/4
+    const XFS_MAGIC: i64 = 0x5846_5342;
+    const BTRFS_MAGIC: i64 = 0x9123_683E;
+    const F2FS_MAGIC: i64 = 0xF2F5_2010;
 
     let cpath = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     // SAFETY: statfs fills a zeroed buffer given a valid NUL-terminated path.
@@ -120,7 +123,10 @@ fn is_block_backed(path: &Path) -> Result<bool> {
             std::io::Error::last_os_error()
         );
     }
-    Ok(!matches!(buf.f_type, TMPFS_MAGIC | V9FS_MAGIC))
+    Ok(matches!(
+        buf.f_type,
+        EXT_MAGIC | XFS_MAGIC | BTRFS_MAGIC | F2FS_MAGIC
+    ))
 }
 
 #[test]
