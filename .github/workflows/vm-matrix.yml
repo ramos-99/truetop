@@ -1,9 +1,9 @@
 name: vm-matrix
 
 # Live-kernel integration tests across kernel versions, in a VM. Heavier and
-# newer than the single-kernel run in ci.yml, so it stays dispatch/scheduled and
-# is not wired into the required `check` gate until it has proven stable across a
-# few green runs.
+# newer than the single-kernel run in ci.yml, so it is its own workflow; the
+# `result` job below aggregates the matrix into one status to require in branch
+# protection.
 #
 # We drive the vmtest CLI directly rather than danobi/vmtest-action: the action
 # wraps a deprecated Node runtime, whereas the CLI is a plain `run:` step we can
@@ -11,9 +11,16 @@ name: vm-matrix
 # uses. vmtest orchestrates qemu on the host and maps this filesystem into the
 # guest, so the VM only re-runs the binaries we already built on the host.
 on:
+  push:
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+# One run per ref: a new push cancels the in-flight matrix instead of piling up.
+concurrency:
+  group: vm-matrix-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -86,3 +93,18 @@ jobs:
       # network - it reuses the host cache.
       - name: Cross-kernel smoke under the matrix kernel
         run: vmtest -k bzImage "export PATH='${PATH}' CARGO_NET_OFFLINE=true && cargo xtask test cross_kernel"
+
+  # One status that is green only if every matrix job passed. Require this in
+  # branch protection rather than the 14 individual jobs.
+  result:
+    needs: integration
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Matrix result
+        run: |
+          if [ "${{ needs.integration.result }}" != "success" ]; then
+            echo "vm-matrix: one or more kernels failed"
+            exit 1
+          fi
+          echo "vm-matrix: all kernels passed"
