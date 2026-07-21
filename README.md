@@ -1,6 +1,10 @@
 <div align="center">
 
-<img src="assets/truetop.png" alt="truetop" width="360">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/truetop-logo.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/truetop-logo-light.png">
+  <img alt="truetop" src="assets/truetop-logo-light.png" width="380">
+</picture>
 
 **Per-process Linux monitor built on eBPF.**
 
@@ -11,8 +15,6 @@ CPU, memory, and the one column `top` doesn't have: per-process I/O wait.
 [![collection](https://img.shields.io/badge/collection-eBPF%20CO--RE-F76800?style=flat-square)](#how-it-works)
 [![Rust](https://img.shields.io/badge/Rust-2024-DEA584?style=flat-square&logo=rust&logoColor=white)](Cargo.toml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2EA043?style=flat-square)](#license)
-
-<img src="assets/demo.gif" alt="truetop in action" width="760">
 
 </div>
 
