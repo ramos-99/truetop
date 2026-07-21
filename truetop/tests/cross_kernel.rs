@@ -3,15 +3,55 @@
 //!
 //! The guest is deliberately minimal: a 9p/virtiofs rootfs (no block device) and
 //! virtualized, oversubscribed timing. So these assert only what is robust in any
-//! environment - that truetop loads, attaches, and collects on this kernel,
-//! exercising the CO-RE offsets, the verifier, and the tracepoint attach.
+//! environment - that truetop loads, attaches, collects, and names processes on
+//! this kernel, exercising the CO-RE offsets, the verifier, and the tracepoint
+//! attach.
 //!
 //! The magnitude oracles (CPU vs `/proc`, I/O wait vs `delayacct`) need real
 //! hardware - a block device and faithful timing - so they live in `cpu.rs` and
 //! `iowait.rs` and run on the host, never here.
 
-use anyhow::Result;
+use std::{fs, thread, time::Duration};
+
+use anyhow::{Result, bail};
 use truetop::attach;
+
+/// A child forked from this process that never calls `execve`, spinning so the
+/// collector ranks it into the snapshot. Killed and reaped on drop.
+struct ForkedChild(libc::pid_t);
+
+impl ForkedChild {
+    fn spawn() -> Result<Self> {
+        // SAFETY: the child makes only async-signal-safe calls, and `alarm` caps it
+        // if the parent dies before reaping.
+        match unsafe { libc::fork() } {
+            -1 => bail!("fork: {}", std::io::Error::last_os_error()),
+            0 => unsafe {
+                libc::alarm(10);
+                let mut spin = 0u64;
+                loop {
+                    spin = spin.wrapping_add(1);
+                    std::hint::black_box(spin);
+                }
+            },
+            pid => Ok(Self(pid)),
+        }
+    }
+
+    fn pid(&self) -> u32 {
+        self.0 as u32
+    }
+}
+
+impl Drop for ForkedChild {
+    fn drop(&mut self) {
+        // SAFETY: signalling and reaping our own child.
+        unsafe {
+            libc::kill(self.0, libc::SIGKILL);
+            libc::waitpid(self.0, std::ptr::null_mut(), 0);
+        }
+    }
+}
 
 /// truetop loads, attaches, and collects on this kernel: after a scheduling round
 /// it sees its own process in a snapshot. Needs no block device or faithful timing.
@@ -34,6 +74,38 @@ fn attaches_and_collects() -> Result<()> {
     assert!(
         snapshot.processes.iter().any(|p| p.pid == me),
         "truetop did not see its own process ({me}) after attaching"
+    );
+    Ok(())
+}
+
+/// A child that forks and never execs inherits the parent's `comm`, and the fork
+/// hook must record it - this is how PostgreSQL backends and nginx workers are
+/// spawned, and the `exec` hook alone would leave them unnamed.
+#[test]
+#[ignore = "needs root + a live kernel; run: cargo xtask test cross_kernel"]
+fn names_a_child_that_never_execs() -> Result<()> {
+    // The child inherits the comm of the forking *thread*, so that is the oracle.
+    let expected = fs::read_to_string("/proc/thread-self/comm")?
+        .trim()
+        .to_owned();
+
+    let (_ebpf, mut collector) = attach()?;
+    collector.tick();
+
+    let child = ForkedChild::spawn()?;
+    thread::sleep(Duration::from_millis(300));
+    let snapshot = collector.tick();
+
+    let named = snapshot
+        .processes
+        .iter()
+        .find(|p| p.pid == child.pid())
+        .map(|p| p.name.as_str());
+    assert_eq!(
+        named,
+        Some(expected.as_str()),
+        "fork-only child {} should inherit the parent's comm",
+        child.pid()
     );
     Ok(())
 }

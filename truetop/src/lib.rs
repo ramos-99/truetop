@@ -135,7 +135,12 @@ fn state_offset() -> anyhow::Result<u32> {
 /// Attach the tracepoints and build a [`Collector`] over the CPU and comm maps.
 /// `ebpf` must outlive the collector - it owns the tracepoint links.
 fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
-    for tp in ["sched_switch", "sched_process_exec", "sched_process_exit"] {
+    for tp in [
+        "sched_switch",
+        "sched_process_exec",
+        "sched_process_fork",
+        "sched_process_exit",
+    ] {
         attach_raw_tracepoint(ebpf, tp)?;
     }
 

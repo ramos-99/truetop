@@ -26,6 +26,8 @@ allocation overhead.
 - `sched_switch` - CPU utilization and D-state I/O wait per PID (one program,
   fanned out per metric)
 - `sched_process_exec` - process identity (`comm`) capture
+- `sched_process_fork` - identity for children that never `exec` (they inherit
+  the parent's `comm`), so fork-per-connection servers are named without `/proc`
 - `sched_process_exit` - PID lifecycle cleanup
 - `block_rq_issue` / `block_rq_complete` - block I/O device latency (Phase 2b)
 
