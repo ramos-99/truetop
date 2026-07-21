@@ -311,7 +311,7 @@ fn process_row<'a>(p: &'a ProcessMetrics) -> Row<'a> {
     let idle = p.cpu.cpu_percent < 0.05;
     let name_style = Style::new().fg(if idle { theme::DIM } else { theme::TEXT });
 
-    Row::new([
+    let row = Row::new([
         cell(p.pid.to_string(), pid_a, name_style),
         cell(
             p.user.clone().unwrap_or_else(|| "-".into()),
@@ -326,7 +326,11 @@ fn process_row<'a>(p: &'a ProcessMetrics) -> Row<'a> {
         ),
         cell(mem_text(p), mem_a, mem_style(p)),
         cell(io_text(p), io_a, io_style(p)),
-    ])
+    ]);
+    match theme::io_row_bg(io_of(p)) {
+        Some(bg) => row.style(Style::new().bg(bg)),
+        None => row,
+    }
 }
 
 fn draw_status(frame: &mut Frame, sort: Sort, area: Rect) {
