@@ -50,11 +50,13 @@ const COLUMNS: [(&str, Constraint, Alignment); 6] = [
     ("IO Wait", Constraint::Length(9), Alignment::Right),
 ];
 const COL_CPU: usize = 3;
+const COL_MEM: usize = 4;
 const COL_IO: usize = 5;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sort {
     Cpu,
+    Mem,
     Io,
 }
 
@@ -62,7 +64,16 @@ impl Sort {
     fn column(self) -> usize {
         match self {
             Self::Cpu => COL_CPU,
+            Self::Mem => COL_MEM,
             Self::Io => COL_IO,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Mem => "mem",
+            Self::Io => "io",
         }
     }
 }
@@ -96,6 +107,7 @@ impl App {
             KeyCode::Home => self.select(0),
             KeyCode::End => self.select(last),
             KeyCode::Char('c') => self.set_sort(Sort::Cpu),
+            KeyCode::Char('m') => self.set_sort(Sort::Mem),
             KeyCode::Char('i') => self.set_sort(Sort::Io),
             _ => {}
         }
@@ -276,6 +288,7 @@ fn draw_table(frame: &mut Frame, state: &SystemState, app: &mut App, area: Rect)
     let mut sorted: Vec<&ProcessMetrics> = state.processes.iter().collect();
     match app.sort {
         Sort::Cpu => sorted.sort_by(|a, b| b.cpu.cpu_percent.total_cmp(&a.cpu.cpu_percent)),
+        Sort::Mem => sorted.sort_by_key(|p| std::cmp::Reverse(mem_of(p))),
         Sort::Io => sorted.sort_by(|a, b| io_of(b).total_cmp(&io_of(a))),
     }
 
@@ -340,17 +353,14 @@ fn draw_status(frame: &mut Frame, sort: Sort, area: Rect) {
             Span::styled(format!(" {desc}   "), Style::new().fg(theme::DIM)),
         ]
     };
-    let sort_label = match sort {
-        Sort::Cpu => "cpu",
-        Sort::Io => "io",
-    };
     let mut spans = vec![Span::raw(" ")];
     spans.extend(key("q", "quit"));
     spans.extend(key("↑↓", "nav"));
     spans.extend(key("c", "sort cpu"));
+    spans.extend(key("m", "sort mem"));
     spans.extend(key("i", "sort io"));
     spans.push(Span::styled(
-        format!("│ by {sort_label}"),
+        format!("│ by {}", sort.label()),
         Style::new().fg(theme::DIM),
     ));
     frame.render_widget(Line::from(spans), area);
@@ -370,6 +380,10 @@ fn io_style(p: &ProcessMetrics) -> Style {
     p.io.map_or(Style::new().fg(theme::DIM), |io| {
         theme::io_heat(io.io_wait_percent)
     })
+}
+
+fn mem_of(p: &ProcessMetrics) -> u64 {
+    p.mem.map_or(0, |m| m.rss_bytes)
 }
 
 fn mem_text(p: &ProcessMetrics) -> String {
