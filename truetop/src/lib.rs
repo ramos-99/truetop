@@ -11,6 +11,7 @@
 mod backend;
 mod batch;
 mod btf;
+mod cli;
 pub mod metrics;
 mod ui;
 
@@ -36,12 +37,21 @@ use truetop_common::COMM_LEN;
 
 /// Load and attach the eBPF, then run either the headless bench loop or the UI.
 pub async fn run() -> anyhow::Result<()> {
+    let ticks = match cli::parse(std::env::args().skip(1))? {
+        cli::Command::Print(text) => {
+            println!("{text}");
+            return Ok(());
+        }
+        cli::Command::Bench(ticks) => Some(ticks),
+        cli::Command::Ui => None,
+    };
+
     env_logger::init();
     raise_memlock();
 
     let (ebpf, collector) = attach().map_err(diagnose)?;
 
-    match bench_ticks() {
+    match ticks {
         Some(ticks) => backend::run_headless(collector, ticks),
         None => run_ui(collector).await?,
     }
@@ -199,17 +209,6 @@ fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Re
         .attach(name)
         .with_context(|| format!("attaching `{name}`"))?;
     Ok(())
-}
-
-/// `--bench <TICKS>`: headless mode running `TICKS` collector ticks, no UI.
-fn bench_ticks() -> Option<u32> {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
-        if arg == "--bench" {
-            return args.next()?.parse().ok();
-        }
-    }
-    None
 }
 
 /// Resolve when the process receives SIGINT or (on Unix) SIGTERM.
