@@ -12,6 +12,9 @@ default-members = ["truetop", "truetop-common", "bench"]
 [workspace.package]
 license = "MIT OR Apache-2.0"
 edition = "2024"
+# let-chains, used in the eBPF hooks, stabilised here.
+rust-version = "1.88"
+repository = "https://github.com/ramos-99/truetop"
 
 [workspace.dependencies]
 aya = { git = "https://github.com/aya-rs/aya", default-features = false }

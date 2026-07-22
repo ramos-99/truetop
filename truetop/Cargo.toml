@@ -2,8 +2,13 @@
 name = "truetop"
 version = "0.1.0"
 edition.workspace = true
-
+rust-version.workspace = true
+repository.workspace = true
 license.workspace = true
+
+description = "Per-process Linux monitor built on eBPF, including per-process I/O wait"
+keywords = ["ebpf", "monitoring", "linux", "top", "observability"]
+categories = ["command-line-utilities", "os::linux-apis"]
 
 [dependencies]
 truetop-common = { path = "../truetop-common", features = ["user"] }
