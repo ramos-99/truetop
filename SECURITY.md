@@ -4,7 +4,7 @@
 
 Report vulnerabilities privately through GitHub's
 [security advisory form](https://github.com/ramos-99/truetop/security/advisories/new).
-If that is unavailable, email martimcr@gmail.com. Do not open a public issue.
+If that is unavailable, email m@martimcr.com. Do not open a public issue.
 
 Include the commit or release, the kernel version and architecture, and a
 reproduction. A proof of concept shortens triage.
