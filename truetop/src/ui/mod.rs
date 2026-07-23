@@ -49,14 +49,6 @@ impl Sort {
             Self::Io => table::COL_IO,
         }
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Cpu => "cpu",
-            Self::Mem => "mem",
-            Self::Io => "io",
-        }
-    }
 }
 
 /// Renderer-owned view state. None of it reaches the collector.
@@ -258,13 +250,9 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     let mut spans = vec![Span::raw(" ")];
     spans.extend(key("q", "quit"));
     spans.extend(key("↑↓", "nav"));
-    spans.extend(key("c/m/i", "sort"));
+    push_sort_keys(&mut spans, app.sort);
     spans.extend(key("/", "filter"));
     spans.extend(key("space", "pause"));
-    spans.push(Span::styled(
-        format!("│ by {}", app.sort.label()),
-        Style::new().fg(theme::DIM),
-    ));
     if !app.filter.is_empty() {
         spans.push(Span::styled(
             format!("  filter \"{}\"", app.filter),
@@ -278,6 +266,23 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
     frame.render_widget(Line::from(spans), area);
+}
+
+/// The `c` / `m` / `i` sort keys with the active one lit and the rest dim, so a
+/// sort change is legible at a glance - the active key moves as it is pressed.
+fn push_sort_keys(spans: &mut Vec<Span<'static>>, active: Sort) {
+    spans.push(Span::styled("sort ", Style::new().fg(theme::DIM)));
+    for (label, sort) in [("c", Sort::Cpu), ("m", Sort::Mem), ("i", Sort::Io)] {
+        let style = if sort == active {
+            Style::new()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::new().fg(theme::DIM)
+        };
+        spans.push(Span::styled(format!(" {label} "), style));
+    }
+    spans.push(Span::raw("   "));
 }
 
 /// Render a byte count as a compact human-readable string (e.g. `12.3 M`).
