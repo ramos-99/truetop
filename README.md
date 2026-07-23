@@ -12,6 +12,8 @@ Per-process Linux monitor built on eBPF.
 [![kernel](https://img.shields.io/badge/Linux-%E2%89%A5%205.10-F76800?style=flat-square&logo=linux&logoColor=white)](#requirements)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2EA043?style=flat-square)](#license)
 
+<img src="assets/demo.gif" alt="truetop sorting by I/O wait: fio readers blocked on the disk light up red" width="820">
+
 </div>
 
 ---

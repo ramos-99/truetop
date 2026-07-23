@@ -2,9 +2,11 @@
 # VHS renders its own clean terminal, so the GIF has no wallpaper/transparency.
 #
 # Prereqs (must run on a machine with a real disk - the recording is a real
-# session, nothing is faked):
+# session, nothing is faked). Install as a plain `truetop` so the GIF shows the
+# shipped command, not a dev path:
 #   cargo build --release
-#   sudo setcap cap_bpf,cap_perfmon+ep target/release/truetop   # no sudo prompt on camera
+#   sudo install -m 755 target/release/truetop /usr/local/bin/truetop
+#   sudo setcap cap_bpf,cap_perfmon+ep /usr/local/bin/truetop   # no sudo prompt on camera
 #   mkdir -p assets && vhs demo/demo.tape
 
 Output assets/demo.gif
@@ -25,8 +27,9 @@ Sleep 3s
 Ctrl+L
 Show
 
-# Launch (CAP_BPF-granted, so no sudo). Sorted by CPU first, like every other top.
-Type "./target/release/truetop" Enter
+# Launch (CAP_BPF-granted, so no sudo). Typed slowly so the command reads, then
+# sorted by CPU first, like every other top.
+Type@300ms "truetop" Enter
 Sleep 4s
 
 # Sort by I/O wait: the disk readers climb to the top - high IO Wait, low CPU.
