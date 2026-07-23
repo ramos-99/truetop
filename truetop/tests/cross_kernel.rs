@@ -90,9 +90,13 @@ fn names_a_child_that_never_execs() -> Result<()> {
         .to_owned();
 
     let (_ebpf, mut collector) = attach()?;
-    collector.tick();
 
+    // Fork before the baseline tick: the counting tick needs a prior sample to
+    // diff against, or the child reads 0% and can fall outside the row cap on a
+    // busy machine - which is what made this flaky in CI.
     let child = ForkedChild::spawn()?;
+    thread::sleep(Duration::from_millis(300));
+    collector.tick();
     thread::sleep(Duration::from_millis(300));
     let snapshot = collector.tick();
 
