@@ -6,26 +6,21 @@
   <img alt="truetop" src="assets/truetop-logo-light.png" width="380">
 </picture>
 
-**Per-process Linux monitor built on eBPF.**
-
-CPU, memory, and the one column `top` doesn't have: per-process I/O wait.
+Per-process Linux monitor built on eBPF.
 
 [![CI](https://github.com/ramos-99/truetop/actions/workflows/ci.yml/badge.svg)](https://github.com/ramos-99/truetop/actions/workflows/ci.yml)
 [![kernel](https://img.shields.io/badge/Linux-%E2%89%A5%205.10-F76800?style=flat-square&logo=linux&logoColor=white)](#requirements)
-[![collection](https://img.shields.io/badge/collection-eBPF%20CO--RE-F76800?style=flat-square)](#how-it-works)
-[![Rust](https://img.shields.io/badge/Rust-2024-DEA584?style=flat-square&logo=rust&logoColor=white)](Cargo.toml)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2EA043?style=flat-square)](#license)
 
 </div>
 
 ---
 
-`top`, `htop`, and `btop` parse `/proc` — one directory per process, every refresh —
-so their cost grows with the process count. truetop collects the same per-process
-CPU **in the kernel** with O(1)-per-event eBPF, drains it in a single batched
-syscall per refresh, and adds a metric none of them show: **how long each process
-was blocked on I/O** — the thing you want when the box feels stuck but the CPU
-looks idle.
+truetop shows per-process CPU, memory, and one column `top`, `htop` and `btop`
+do not have: how long each process sat blocked on storage. Everything except
+memory is collected inside the kernel by O(1)-per-event eBPF programs and
+drained in a single batched syscall per refresh, so collection cost does not
+grow with the process count.
 
 ## Contents
 
@@ -33,130 +28,173 @@ looks idle.
 
 ## Features
 
-- **Per-process I/O wait** — time each process spent in uninterruptible (D-state)
-  sleep, charged to the task that actually blocked. `top`/`htop`/`btop` don't show
-  it per process; `iotop` gets a related number from `delayacct` over netlink.
-  truetop reads it straight from the scheduler, in-kernel, alongside everything else.
-- **O(1) collection** — CPU and I/O wait accrue on `sched_switch`; one
-  `bpf_map_lookup_batch` per refresh drains it all, flat whether you have 50
-  processes or 50,000.
-- **CO-RE across kernels** — `task_struct` offsets are read from the kernel's own
-  BTF at load (no libbpf), so one binary spans releases. CI runs the programs on a
-  live-kernel matrix, **Arch and Fedora across 5.15 → 6.18**.
-- **Honest about cost** — the `sched_switch` hook runs on every context switch, so
-  overhead tracks the switch rate, not the process count. It is measured, not
-  hand-waved: see [Overhead](#overhead) and [the benchmarks](bench/BENCHMARKS.md).
+- **Per-process I/O wait.** The time each process spent in uninterruptible
+  (D-state) sleep, charged to the task that actually blocked. `top`, `htop` and
+  `btop` do not show it per process; `iotop` derives a related number from
+  `delayacct` over netlink. truetop reads it from the scheduler, in-kernel, next
+  to everything else.
+
+  It is a diagnostic rather than a dashboard: on an idle machine the column
+  stays empty. A kernel worker high in it is deferred writeback being flushed;
+  one of your own processes high in it is a synchronous stall, which is the case
+  the other monitors leave you to guess at.
+
+- **O(1) collection.** CPU and I/O wait accumulate on `sched_switch`, and one
+  `bpf_map_lookup_batch` per refresh drains the lot, whether the machine is
+  running 50 processes or 50,000.
+
+- **One binary across kernels.** `task_struct` offsets are resolved from the
+  kernel's own BTF at load and injected as constants, without libbpf. CI runs
+  the programs on live kernels 5.15 through 6.18, on Arch and Fedora configs.
+
+- **Measured overhead.** The `sched_switch` hook runs on every context switch,
+  so the cost tracks the switch rate rather than the process count. The figures,
+  and the crossover past which htop is cheaper, are in [Overhead](#overhead).
 
 ## Requirements
 
-- Linux **≥ 5.10**, x86-64 (CI-verified on 5.15 → 6.18; aarch64 builds, runtime untested)
-- Kernel built with `CONFIG_DEBUG_INFO_BTF=y` — `/sys/kernel/btf/vmlinux` present at
-  runtime. Every mainstream distro ships this; truetop aborts with a clear message if
-  it is missing.
-- `CAP_BPF` + `CAP_PERFMON` (or root) to load the programs.
+- Linux 5.10 or newer on x86-64. CI runs the programs on live kernels 5.15
+  through 6.18. aarch64 compiles but is not tested at runtime.
+- A kernel built with `CONFIG_DEBUG_INFO_BTF=y`, so `/sys/kernel/btf/vmlinux`
+  exists at runtime. Every mainstream distro ships this, and truetop aborts with
+  a message naming the option if it is missing.
+- `CAP_BPF` and `CAP_PERFMON`, or root, to load the programs.
 
 ## Install
 
-No published binary yet. Build from source — the build script compiles the eBPF
-object, so it needs the nightly toolchain and `bpf-linker`:
+There is no published binary yet. The build compiles the eBPF object, so it
+needs the nightly toolchain and `bpf-linker`:
 
 ```sh
 rustup toolchain install stable
 rustup toolchain install nightly --component rust-src
 cargo install bpf-linker
+```
 
+Then either build the repository:
+
+```sh
 git clone https://github.com/ramos-99/truetop
 cd truetop
 cargo build --release
 ```
 
-The binary lands at `target/release/truetop`. Prebuilt releases and an AUR package
-are on the [roadmap](#roadmap).
+or install straight from git:
+
+```sh
+cargo install --git https://github.com/ramos-99/truetop truetop
+```
+
+Prebuilt releases and an AUR package are on the [roadmap](#roadmap).
 
 ## Usage
 
-Loading eBPF needs privileges, so run as root (or grant the binary `CAP_BPF` and
-`CAP_PERFMON`):
+Loading eBPF needs privileges, so run as root or grant the binary the two
+capabilities:
 
 ```sh
 sudo ./target/release/truetop
-cargo xtask run                 # build + run, elevating with sudo
-sudo ./target/release/truetop --bench 5   # headless: 5 collector ticks, no UI
+sudo setcap cap_bpf,cap_perfmon+ep ./target/release/truetop   # then run it unprivileged
+cargo xtask run                                               # build and run, elevating with sudo
 ```
 
-| key            | action                 |
-| -------------- | ---------------------- |
-| `q` / `Esc`    | quit                   |
-| `↑` `↓` / `k` `j` | move selection      |
-| `Home` / `End` | first / last row       |
-| `c`            | sort by CPU            |
-| `i`            | sort by I/O wait       |
+| key | action |
+| --- | --- |
+| `q`, `Esc` | quit |
+| `↑` `↓`, `k` `j` | move the selection |
+| `PgUp`, `PgDn` | move a page |
+| `Home`, `End` | first, last row |
+| `c`, `m`, `i` | sort by CPU, memory, I/O wait; press again to reverse |
+| `/` | filter by program name or pid |
+| `space` | pause |
 
-Columns: `Pid`, `User`, `Program`, `Cpu%`, `Mem`, `IO Wait`.
+Columns are `Pid`, `User`, `Program`, `Cpu%`, `Mem` and `IO Wait`. The table
+holds the top 256 rows of the current sort, so drawing does not grow with the
+process count either.
+
+`truetop --bench <TICKS>` runs the collector headless for a fixed number of
+ticks, which is what the benchmarks drive. `--help` and `--version` answer
+without privileges.
 
 ## How it works
 
-Three raw tracepoints, nothing on the hotpath from `/proc`:
+Four raw tracepoints, and nothing reads `/proc` on the hot path:
 
-- `sched_switch` — per-process on-CPU time and I/O wait (stamp the timestamp on a
-  D-state switch-out, charge the interval to the task on its next switch-in).
-- `sched_process_exec` — process identity (`comm`).
-- `sched_process_exit` — deletes the PID's map entries, so nothing stale accumulates.
+- `sched_switch` accumulates per-process on-CPU time, and I/O wait by stamping a
+  timestamp when a task leaves the CPU in uninterruptible sleep and charging the
+  interval when it comes back.
+- `sched_process_exec` and `sched_process_fork` capture process names. Recording
+  the fork is what names children that never call `execve`, such as PostgreSQL
+  backends and nginx workers.
+- `sched_process_exit` announces the departure on a ring buffer. User space
+  reads the process's final totals on its next refresh, so one that ran and ended
+  between two refreshes is still charged its time, then deletes the entry.
 
-`task_struct` field offsets come from the kernel's own BTF, injected as load-time
-constants (hand-rolled CO-RE — aya emits no relocations), which is what lets one
-binary run across kernels. Userspace is two threads sharing an
-[`arc-swap`](https://docs.rs/arc-swap): a **collector** wakes every second, drains
-every per-CPU map in one `bpf_map_lookup_batch`, computes deltas against the last
-tick, and publishes an immutable snapshot; the **ratatui** renderer loads that
-snapshot lock-free and formats only the visible rows. Kernel work is strictly O(1)
-per event — counters and timestamps only; all aggregation happens in userspace.
+A process that both starts and ends within a single refresh is the exception:
+with no earlier sample to subtract from, that interval's time is not attributed
+to it.
+
+`task_struct` field offsets are read from the kernel's own BTF at load time and
+injected as constants, which is what lets one binary span kernel versions
+without libbpf.
+
+User space runs two threads over an [`arc-swap`](https://docs.rs/arc-swap). A
+collector wakes every second, drains every per-CPU map in one
+`bpf_map_lookup_batch`, computes deltas against the previous tick, and publishes
+an immutable snapshot. The [ratatui](https://ratatui.rs) renderer loads that
+snapshot without locking and formats only the rows it draws. Kernel-side work is
+O(1) per event and stores counters and timestamps only; all aggregation happens
+in user space.
 
 ## Benchmarks
 
-Per-process CPU is collected in-kernel and pulled in one batched syscall, instead
-of parsing `/proc/<pid>/stat` once per process — O(1) syscalls per refresh instead
-of O(N). Reproduce everything with `cargo xtask bench`.
+Reproduce these with `cargo xtask bench`.
 
-| metric                                | truetop                    | htop / btop           |
-| ------------------------------------- | -------------------------- | --------------------- |
-| CPU at ~9,000 processes               | **1.7%** of a core, flat   | 33% / 22%, climbing   |
-| data syscalls per refresh (~5,000)    | **~780**                   | ~12,000 (htop)        |
-| per-process collection work           | **~30 ns**                 | ~12 µs (procfs)       |
+| metric | truetop | htop / btop |
+| --- | --- | --- |
+| CPU at ~9,000 processes | 1.7% of a core, flat | 33% / 22%, climbing |
+| data syscalls per refresh at ~5,000 | ~780 | ~12,000 (htop) |
+| per-process collection work | ~30 ns | ~12 µs (procfs) |
 
-[![Read the benchmarks](https://img.shields.io/badge/read_the_benchmarks-method_%C2%B7_results_%C2%B7_kernel_cost-8250DF?style=for-the-badge)](bench/BENCHMARKS.md)
+Method, full results and the kernel-side cost are in
+[bench/BENCHMARKS.md](bench/BENCHMARKS.md).
 
 ## Overhead
 
 `sched_switch` fires on every context switch, so truetop's cost scales with the
-context-switch rate, not the process count. The per-event program is O(1) —
-median ~335 ns on the reference machine — but not zero: under `hackbench` (a
-context-switch storm) it adds single-digit percent wall-clock, while a normal
-system does orders of magnitude fewer switches and pays well under 1%. Concretely,
-truetop is cheaper than htop only while switches/s stay below ~80,000 + 130 ×
-processes; a switch-heavy box with few processes costs more, not less. The cost
-also tracks the clocksource (`bpf_ktime_get_ns` runs per event; on `hpet` it roughly
-triples). Benchmark on latency-sensitive hosts before deploying — the numbers and
-method are in [bench/BENCHMARKS.md](bench/BENCHMARKS.md).
+context-switch rate rather than the process count. The per-event program is O(1)
+and measured at a median of ~335 ns on the reference machine, which is small but
+not free: under a `hackbench` context-switch storm it costs single-digit percent
+of wall clock, while an ordinary system does orders of magnitude fewer switches
+and pays well under 1%.
+
+Concretely, truetop is cheaper than htop only while switches per second stay
+below roughly 80,000 + 130 × processes. A switch-heavy machine with few
+processes costs more, not less. The figure also tracks the clocksource, since
+`bpf_ktime_get_ns` runs per event and roughly triples on `hpet`. Benchmark
+before deploying on latency-sensitive hosts.
 
 ## Memory
 
-RSS is read from `/proc/<pid>/statm` in userspace, for the visible rows only, so
-the cost is bounded regardless of process count. This is a fallback, not a design
-choice: since Linux 6.2 a process's RSS lives in a `percpu_counter`, and no eBPF
-interface exposes the accurate summed value — the global count alone drifts from
-`top` by megabytes on busy multi-threaded processes. When the kernel provides a
-usable interface (a helper or a tracepoint carrying the summed value), memory will
-move in-kernel like the rest. Until then it is the one metric not collected via eBPF.
+RSS comes from `/proc/<pid>/statm` in user space, read only for the rows on
+screen, so the cost stays bounded regardless of process count.
+
+This is a fallback rather than a preference. Since Linux 6.2 a process's RSS
+lives in a `percpu_counter`, and no eBPF interface exposes the summed value; the
+global count on its own drifts from `top` by megabytes on busy multi-threaded
+processes. If the kernel grows a helper or a tracepoint carrying the total,
+memory moves in-kernel with everything else.
 
 ## Roadmap
 
-- Block-device latency per PID via `block_rq_issue` / `block_rq_complete`.
-- `bpf_iter` task walk to drop the single `/proc` backfill of pre-existing process
-  names at startup, making truetop fully `/proc`-independent.
-- Memory in-kernel once the kernel exposes an accurate per-process RSS interface.
-- Widen the CI floor to the 5.10–5.13 `state`-field path, and aarch64 at runtime.
+- Per-PID block device latency from `block_rq_issue` and `block_rq_complete`.
+- A `bpf_iter` task walk to replace the one-time `/proc` sweep that names
+  processes which already existed at startup.
+- Memory in-kernel, once an accurate per-process interface exists.
+- Kernels 5.10 through 5.13 in CI, which take the pre-5.14 `state` field path,
+  and aarch64 at runtime.
 
 ## License
 
-User-space: **MIT OR Apache-2.0**. eBPF code (`truetop-ebpf/`): **GPL-2.0 OR MIT**.
+User space is MIT or Apache-2.0. The eBPF code in `truetop-ebpf/` is GPL-2.0 or
+MIT, matching the licence it declares to the kernel verifier.
