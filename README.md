@@ -24,7 +24,7 @@ grow with the process count.
 
 ## Contents
 
-[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [Memory](#memory) · [Roadmap](#roadmap) · [License](#license)
+[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [Memory](#memory) · [Roadmap](#roadmap) · [Security](#security) · [License](#license)
 
 ## Features
 
@@ -193,6 +193,13 @@ memory moves in-kernel with everything else.
 - Memory in-kernel, once an accurate per-process interface exists.
 - Kernels 5.10 through 5.13 in CI, which take the pre-5.14 `state` field path,
   and aarch64 at runtime.
+
+## Security
+
+> [!IMPORTANT]
+> truetop loads eBPF with `CAP_BPF` and `CAP_PERFMON`, or root. Report
+> vulnerabilities privately through the [security policy](SECURITY.md), not a
+> public issue.
 
 ## License
 
