@@ -13,6 +13,8 @@ mod batch;
 mod btf;
 mod cli;
 pub mod metrics;
+mod reaper;
+mod system;
 mod ui;
 
 use std::sync::{
@@ -24,7 +26,7 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use aya::{
     EbpfLoader,
-    maps::{HashMap, Map},
+    maps::{HashMap, Map, RingBuf},
     programs::RawTracePoint,
     util::nr_cpus,
 };
@@ -160,9 +162,11 @@ fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
     let iowait_ns = take_percpu_map(ebpf, "IOWAIT_NS")?;
     let comm: HashMap<_, u32, [u8; COMM_LEN]> =
         HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
+    let exits: RingBuf<_> =
+        RingBuf::try_from(ebpf.take_map("EXITS").context("EXITS map not found")?)?;
     let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
 
-    Ok(Collector::new(cpu_ns, iowait_ns, comm, ncpus))
+    Ok(Collector::new(cpu_ns, iowait_ns, comm, exits, ncpus))
 }
 
 fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {

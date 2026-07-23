@@ -1,6 +1,7 @@
 //! Process identity capture. `comm` is written only on the cold `exec` and
-//! `fork` paths (and dropped on `exit`), never on `sched_switch`, so the hotpath
-//! stays string-free (CLAUDE.md §2/§6).
+//! `fork` paths, never on `sched_switch`, so the hotpath stays string-free
+//! (CLAUDE.md §2/§6). The name outlives the process: user space reads it to
+//! label a departed process before reaping the entry (see `exit_notify`).
 //!
 //! `exec` alone would miss every process that forks and never calls `execve` -
 //! how PostgreSQL backends, nginx workers and Redis children are spawned -
@@ -55,12 +56,4 @@ pub fn sched_process_fork(ctx: RawTracePointContext) -> i32 {
         let _ = COMM_MAP.insert(tgid, comm, 0);
     }
     0
-}
-
-/// Drop a dead process's name; called by the shared exit hook on the leader.
-#[inline(always)]
-pub(crate) fn forget(tid: u32, tgid: u32) {
-    if tid == tgid {
-        let _ = COMM_MAP.remove(tgid);
-    }
 }

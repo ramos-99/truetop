@@ -52,13 +52,3 @@ pub(crate) fn mark_in(tid: u32, now: u64) {
     }
     let _ = START_TIME.set(0, now, 0);
 }
-
-/// Drop a dead task's CPU state; called by the shared exit hook. The stopwatch is
-/// a per-CPU slot that recycles itself, so only the per-process accumulator needs
-/// reaping, on the leader.
-#[inline(always)]
-pub(crate) fn forget(tid: u32, tgid: u32) {
-    if tid == tgid {
-        let _ = CPU_NS.remove(tgid);
-    }
-}

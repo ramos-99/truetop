@@ -36,6 +36,14 @@ impl Resolver {
             .unwrap_or_else(|| UNKNOWN.to_owned())
     }
 
+    /// Drop a departed process's name once user space has finished with it, so
+    /// `COMM_MAP` does not grow without bound (the exit path no longer clears it
+    /// in the kernel; see `reaper`).
+    pub(crate) fn forget(&mut self, tgid: u32) {
+        let _ = self.comm.remove(&tgid);
+        self.seed.remove(&tgid);
+    }
+
     /// Owning user, or the numeric uid when it maps to no passwd entry. `None`
     /// if the process exited before its uid could be read.
     pub(crate) fn user(&self, tgid: u32) -> Option<String> {

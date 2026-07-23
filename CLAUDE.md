@@ -40,8 +40,15 @@ express the data, with the rationale documented in the module: `COMM_MAP`
 (cold exec-path writes) and `SLEEP_SINCE` (a D-sleep interval spans CPUs;
 lock-free RCU lookups on the hotpath, locked updates only on D transitions).
 
-**PID cleanup**: `sched_process_exit` hook calls `bpf_map_delete_elem()`
-immediately on process termination. No stale entries accumulate.
+**PID cleanup**: a process's final CPU and I/O-wait totals must be read before
+they are dropped, and those totals live in per-CPU maps the exit hook cannot
+sum. So `sched_process_exit` drops only transient per-thread state (`SLEEP_SINCE`)
+in the kernel, and announces the departure on a ring buffer; user space reads
+the final totals on its next tick - charging a process that lived and died
+between two ticks its full time - and only then deletes the entries
+(`bpf_map_delete_elem` by fd, since aya offers no typed remove on a raw
+`MapData`). Cleanup is therefore deferred by at most one tick, driven by the exit
+ring rather than a scan, and bounded: the maps never accumulate the dead.
 
 **CO-RE enforcement**: direct pointer dereferencing is **prohibited**. All
 kernel struct accesses use `bpf_core_read!` macros for cross-kernel ABI

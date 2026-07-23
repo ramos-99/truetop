@@ -5,8 +5,9 @@
 //! - [`sched`]     - the `sched_switch` hotpath, fanned out to each metric,
 //! - [`cpu`]       - on-CPU time accounting,
 //! - [`iowait`]    - uninterruptible (D-state) sleep accounting,
-//! - [`comm`]      - process identity via `sched_process_exec` (cold path),
-//! - [`lifecycle`] - `sched_process_exit` cleanup fanned out to each subsystem.
+//! - [`comm`]        - process identity, captured on the `exec` and `fork` tracepoints (cold path),
+//! - [`lifecycle`]   - `sched_process_exit`: drop transient state, announce the exit,
+//! - [`exit_notify`] - the exit ring buffer user space reaps the accounting from.
 //!
 //! Memory is deliberately *not* here - see `truetop`'s collector and the README:
 //! since Linux 6.2 RSS lives in a `percpu_counter` whose exact value can't be
@@ -17,6 +18,7 @@
 
 mod comm;
 mod cpu;
+mod exit_notify;
 mod iowait;
 mod lifecycle;
 mod sched;

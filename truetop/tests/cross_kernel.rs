@@ -109,3 +109,39 @@ fn names_a_child_that_never_execs() -> Result<()> {
     );
     Ok(())
 }
+
+/// A process that exits between two collector reads must still be charged its
+/// time on the read that follows, then be gone on the next. This is the whole
+/// point of leaving the counters standing for user space to reap: the exit hook
+/// used to delete them in the kernel, so a short-lived process vanished with its
+/// CPU time uncounted - exactly the work `make -j` is made of.
+#[test]
+#[ignore = "needs root + a live kernel; run: cargo xtask test cross_kernel"]
+fn accounts_for_a_process_that_exits_between_reads() -> Result<()> {
+    let (_ebpf, mut collector) = attach()?;
+
+    let child = ForkedChild::spawn()?;
+    let pid = child.pid();
+
+    // Let the child accrue CPU, then take the baseline the delta is measured from.
+    thread::sleep(Duration::from_millis(300));
+    collector.tick();
+
+    // More CPU, then end it: SIGKILL and reap, so the exit tracepoint has fired
+    // by the time the next read runs.
+    thread::sleep(Duration::from_millis(300));
+    drop(child);
+
+    let after_exit = collector.tick();
+    assert!(
+        after_exit.processes.iter().any(|p| p.pid == pid),
+        "a process that exited this interval must still be accounted for ({pid})"
+    );
+
+    let next = collector.tick();
+    assert!(
+        !next.processes.iter().any(|p| p.pid == pid),
+        "the accounted process must be reaped the following tick ({pid})"
+    );
+    Ok(())
+}

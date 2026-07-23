@@ -53,11 +53,10 @@ pub(crate) fn wake_in(next: &Task, tid: u32, now: u64) {
     let _ = IOWAIT_NS.insert(tgid, total.saturating_add(now.saturating_sub(since)), 0);
 }
 
-/// Stamp is per-thread; the accumulator is per-process, reaped on the leader.
+/// Drop a departed thread's sleep stamp. The `IOWAIT_NS` accumulator is not
+/// touched here: it is per-process accounting that user space reaps once it has
+/// read the final total (see `exit_notify`).
 #[inline(always)]
-pub(crate) fn forget(tid: u32, tgid: u32) {
+pub(crate) fn forget_thread(tid: u32) {
     let _ = SLEEP_SINCE.remove(tid);
-    if tid == tgid {
-        let _ = IOWAIT_NS.remove(tgid);
-    }
 }

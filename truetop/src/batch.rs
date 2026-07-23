@@ -1,11 +1,49 @@
-//! Raw `BPF_MAP_LOOKUP_BATCH` for the per-CPU `u32 → u64` CPU-time map. Aya has
-//! no batch API; this reads the whole map in O(1) syscalls instead of
-//! `Map::iter`'s O(N) `get_next_key` + lookup. See bench/BENCHMARKS.md.
+//! Raw BPF map syscalls the typed aya API does not cover, addressed by file
+//! descriptor. `BPF_MAP_LOOKUP_BATCH` reads a per-CPU `u32 → u64` map in O(1)
+//! syscalls instead of `Map::iter`'s O(N) `get_next_key` + lookup (see
+//! bench/BENCHMARKS.md); `BPF_MAP_DELETE_ELEM` reaps a departed process's entry.
+//! Both need the raw fd, which only `MapData` exposes - and holding `MapData`,
+//! rather than a typed map, is what forecloses aya's typed `remove` here.
 
 use std::{collections::HashMap, io, os::fd::RawFd};
 
-const LOOKUP_BATCH: libc::c_long = 24; // BPF_MAP_LOOKUP_BATCH (uapi/linux/bpf.h)
+// uapi/linux/bpf.h `bpf_cmd`.
+const DELETE_ELEM: libc::c_long = 3;
+const LOOKUP_BATCH: libc::c_long = 24;
 const BATCH: usize = 4096;
+
+/// Delete `key` from a `u32`-keyed map through its fd; on a per-CPU map this
+/// clears every CPU's slot at once. Reaps a departed process once the tick has
+/// read its final totals (see `reaper`).
+pub fn delete_elem(fd: RawFd, key: u32) {
+    let attr = ElemAttr {
+        map_fd: fd as u32,
+        key: &raw const key as u64,
+        ..Default::default()
+    };
+    // SAFETY: a valid bpf_attr for DELETE_ELEM - a live map fd and a pointer to a
+    // u32 key that outlives the call.
+    unsafe {
+        libc::syscall(
+            libc::SYS_bpf,
+            DELETE_ELEM,
+            &raw const attr,
+            size_of::<ElemAttr>(),
+        );
+    }
+}
+
+/// The single-element variant of `union bpf_attr` (uapi/linux/bpf.h); `key` is
+/// 8-byte aligned, hence the pad after the 32-bit fd.
+#[repr(C)]
+#[derive(Default)]
+struct ElemAttr {
+    map_fd: u32,
+    _pad: u32,
+    key: u64,
+    value: u64,
+    flags: u64,
+}
 
 /// Reusable scratch so a tick never allocates (CLAUDE.md §3).
 pub struct BatchReader {

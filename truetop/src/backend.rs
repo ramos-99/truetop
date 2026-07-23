@@ -12,7 +12,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use aya::maps::{HashMap as BpfHashMap, MapData};
+use aya::maps::{HashMap as BpfHashMap, MapData, RingBuf};
 use tokio::time::{MissedTickBehavior, interval};
 use truetop_common::COMM_LEN;
 
@@ -22,6 +22,7 @@ use crate::{
         CpuCollector, CpuMetrics, IoMetrics, IoWaitCollector, MemReader, ProcessMetrics, Resolver,
         Snapshot,
     },
+    reaper::Reaper,
 };
 
 /// Rows enriched (name/user/RSS via `/proc`) per sortable metric. The renderer
@@ -42,6 +43,9 @@ pub struct SystemState {
     pub io_history: VecDeque<f64>,
     pub total_cpu_percent: f64,
     pub total_io_percent: f64,
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    pub load_average: f64,
     pub ncpus: usize,
 }
 
@@ -55,7 +59,9 @@ pub struct Collector {
     iowait: IoWaitCollector,
     names: Resolver,
     mem: MemReader,
+    reaper: Reaper,
     ncpus: usize,
+    memory_total_bytes: u64,
     cpu_history: VecDeque<f64>,
     io_history: VecDeque<f64>,
 }
@@ -65,6 +71,7 @@ impl Collector {
         cpu_ns: MapData,
         iowait_ns: MapData,
         comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
+        exits: RingBuf<MapData>,
         ncpus: usize,
     ) -> Self {
         let ncpus = ncpus.max(1);
@@ -76,9 +83,13 @@ impl Collector {
             iowait: IoWaitCollector::new(),
             names: Resolver::new(comm),
             mem: MemReader::new(),
+            reaper: Reaper::new(exits),
             ncpus,
-            cpu_history: VecDeque::with_capacity(HISTORY),
-            io_history: VecDeque::with_capacity(HISTORY),
+            memory_total_bytes: crate::system::memory_total_bytes(),
+            // Filled with a flat baseline so the charts span their panel from the
+            // first tick instead of drawing into a mostly empty axis.
+            cpu_history: VecDeque::from(vec![0.0; HISTORY]),
+            io_history: VecDeque::from(vec![0.0; HISTORY]),
         }
     }
 
@@ -98,12 +109,20 @@ impl Collector {
         push_capped(&mut self.cpu_history, total_cpu_percent);
         push_capped(&mut self.io_history, total_io_percent);
 
+        // The reads above charged every process that ended this interval its full
+        // time, including the short-lived ones; only now are those entries dropped.
+        self.reaper
+            .reap(&mut self.cpu_ns, &mut self.iowait_ns, &mut self.names);
+
         SystemState {
             processes,
             cpu_history: self.cpu_history.clone(),
             io_history: self.io_history.clone(),
             total_cpu_percent,
             total_io_percent,
+            memory_used_bytes: crate::system::memory_used_bytes(self.memory_total_bytes),
+            memory_total_bytes: self.memory_total_bytes,
+            load_average: crate::system::load_average(),
             ncpus: self.ncpus,
         }
     }

@@ -1,10 +1,16 @@
-//! Process lifecycle. The exit hook fans cleanup out to every subsystem so no
-//! map accumulates dead pids (CLAUDE.md §2); each `forget` owns its own
-//! thread- vs process-scoped policy.
+//! Process lifecycle.
+//!
+//! On exit two things must happen, and they belong to different owners. The
+//! transient sleep timestamp is the kernel's to drop: it is scratch state, not
+//! accounting, and keeping it would leak. The accumulated CPU and I/O-wait
+//! counters are user space's to close: they live in per-CPU maps this program
+//! cannot sum, so the exit only announces the departure and leaves the totals
+//! standing for the next collector tick to read and then remove (see
+//! `exit_notify`).
 
 use aya_ebpf::{macros::raw_tracepoint, programs::RawTracePointContext};
 
-use crate::{comm, cpu, iowait, task::Task};
+use crate::{exit_notify, iowait, task::Task};
 
 #[raw_tracepoint(tracepoint = "sched_process_exit")]
 pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
@@ -15,8 +21,11 @@ pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
         return 0;
     }
     let tgid = task.tgid();
-    cpu::forget(tid, tgid);
-    iowait::forget(tid, tgid);
-    comm::forget(tid, tgid);
+
+    iowait::forget_thread(tid);
+    // The process ends only when its leader does; a thread carries no counters.
+    if tid == tgid {
+        exit_notify::announce(tgid);
+    }
     0
 }
