@@ -63,6 +63,29 @@ pub fn io_row_bg(percent: f64) -> Option<Color> {
     Some(Color::Rgb(r as u8, g as u8, b as u8))
 }
 
+/// Memory: dim when the kernel reports none, warming as the process takes a
+/// larger share of installed RAM.
+pub fn mem_heat(bytes: u64, total: u64) -> Style {
+    if bytes == 0 || total == 0 {
+        return Style::new().fg(DIM);
+    }
+    let share = bytes as f64 / total as f64;
+    let colour = if share < 0.02 {
+        CPU
+    } else if share < 0.10 {
+        Color::Yellow
+    } else {
+        Color::Red
+    };
+    with_bold(Style::new().fg(colour), share >= 0.10)
+}
+
+/// Alternating row tint, dark enough to group rows without competing with the
+/// I/O highlight that overrides it.
+pub fn row_stripe(index: usize) -> Option<Color> {
+    (index % 2 == 1).then_some(Color::Rgb(24, 24, 28))
+}
+
 fn with_bold(style: Style, bold: bool) -> Style {
     if bold {
         style.add_modifier(Modifier::BOLD)
