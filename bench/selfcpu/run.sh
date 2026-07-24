@@ -22,6 +22,7 @@ WARMUP=1
 ROWS=50
 COLS=200
 LOAD=../../target/release/load
+CHURN=../../target/release/churn
 TRUETOP=../../target/release/truetop
 RESULTS="$(cd "$(dirname "$0")/.." && pwd)/results"
 OUT="$RESULTS/selfcpu.csv"
@@ -30,18 +31,20 @@ TCK=$(getconf CLK_TCK)
 PAGE=$(getconf PAGESIZE)
 
 require script btop htop pgrep getconf
-require_built "$LOAD" "$TRUETOP"
+require_built "$LOAD" "$CHURN" "$TRUETOP"
 require_root
 warn_if_not_performance selfcpu
 
 BTOP_HOME=$(btop_home)
 load_pid=
+churn_pid=
 wrapper=
 pid=
 cleanup() {
     [[ -n $pid ]] && kill "$pid" 2>/dev/null || true
     [[ -n $wrapper ]] && kill "$wrapper" 2>/dev/null || true
     [[ -n $load_pid ]] && kill "$load_pid" 2>/dev/null || true
+    [[ -n $churn_pid ]] && kill "$churn_pid" 2>/dev/null || true
     rm -rf "$BTOP_HOME"
 }
 trap cleanup EXIT
@@ -50,6 +53,12 @@ rss_mb() {
     local pages
     pages=$(awk '{print $2}' "/proc/$1/statm" 2>/dev/null || echo 0)
     awk "BEGIN { printf \"%.1f\", $pages * $PAGE / 1048576 }"
+}
+
+# Count live processes from directory names alone; `find` stats each entry and
+# fails when one vanishes mid-scan, which is constant under churn.
+count_procs() {
+    ls -1 /proc | grep -cE '^[0-9]+$'
 }
 
 # measure LABEL PGREP_NAME MODE CMD...
@@ -95,17 +104,19 @@ measure() {
 
     local med p25 p75
     read -r _ med p25 p75 _ _ <<<"$(printf '%s' "$samples" | iqr_stats)"
-    printf 'scale,%s,%d,%s,%s,%s,%s\n' "$label" "$PROCS" "$med" "$p25" "$p75" "$rss" >>"$OUT"
+    printf '%s,%s,%d,%s,%s,%s,%s\n' "$SCENARIO" "$label" "$PROCS" "$med" "$p25" "$p75" "$rss" >>"$OUT"
 }
 
 echo "scenario,tool,procs,cpu_median,cpu_p25,cpu_p75,rss_mb" >"$OUT"
+
+SCENARIO=scale
 for n in "${COUNTS[@]}"; do
     if ((n > 0)); then
         "$LOAD" "$n" &
         load_pid=$!
         sleep 0.5
     fi
-    PROCS=$(find /proc -maxdepth 1 -regex '/proc/[0-9]+' | wc -l)
+    PROCS=$(count_procs)
     echo "== $PROCS processes ==" >&2
 
     measure htop htop pty htop -d 10
@@ -119,5 +130,39 @@ for n in "${COUNTS[@]}"; do
         load_pid=
     fi
 done
+
+# Churn: high process turnover at a low live count - the exit rate a parallel
+# build produces, which drives truetop's per-exit reaping that the count scan
+# above never touches. htop/btop are refresh-bound and barely feel it; this is
+# where truetop pays, so measure it.
+# Drain the last scale load first: its processes are still being reaped, and
+# would otherwise inflate churn's live count. Wait until the count stops falling.
+settle=$(count_procs)
+sleep 2
+while (($(count_procs) + 20 < settle)); do
+    settle=$(count_procs)
+    sleep 2
+done
+
+SCENARIO=churn
+"$CHURN" &
+churn_pid=$!
+sleep 0.5
+p0=$(awk '/^processes /{print $2}' /proc/stat)
+sleep 3
+p1=$(awk '/^processes /{print $2}' /proc/stat)
+RATE=$(((p1 - p0) / 3))
+PROCS=$(count_procs)
+echo "== churn: ~$RATE forks/sec at $PROCS live processes ==" >&2
+echo "forks_per_sec=$RATE live_processes=$PROCS" >"$RESULTS/churn.txt"
+
+measure htop htop pty htop -d 10
+measure btop btop pty env "XDG_CONFIG_HOME=$BTOP_HOME" btop
+measure truetop-ui truetop pty "$TRUETOP"
+measure truetop-collector truetop bare "$TRUETOP" --bench 100000
+
+kill "$churn_pid" 2>/dev/null || true
+wait "$churn_pid" 2>/dev/null || true
+churn_pid=
 
 echo "wrote $OUT" >&2

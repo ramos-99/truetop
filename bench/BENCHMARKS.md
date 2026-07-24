@@ -34,17 +34,25 @@ CPU% of one core, median, htop/btop at a 1s refresh:
 
 | processes | htop | btop | truetop |
 | --------: | ---: | ---: | ------: |
-|       377 |  4.0 |  0.7 |     0.3 |
-|     1,382 |  8.0 |  2.0 |     1.0 |
-|     2,883 | 14.0 |  4.0 |     1.0 |
-|     5,382 | 19.0 |  9.3 |     1.3 |
-|     8,892 | 33.2 | 21.6 |     1.7 |
+|       373 |  4.0 |  0.7 |     0.3 |
+|     1,374 |  7.6 |  2.0 |     1.0 |
+|     2,879 | 11.6 |  4.3 |     1.0 |
+|     5,377 | 19.9 |  9.3 |     1.3 |
+|     7,434 | 33.2 | 22.6 |     1.7 |
 
 htop and btop read one `/proc` entry per process each refresh (O(N)); truetop
 batch-reads the CPU map and touches `/proc` only for the visible viewport, so it
-stays flat. At ~9,000 processes that is ~20x less CPU than htop and ~13x less than
-btop, and the gap widens with N. This is the user-space cost; the kernel
-`sched_switch` price and the RSS trade-off are in the sections below.
+stays flat. At ~7,400 processes that is ~20x less CPU than htop and ~13x less than
+btop, and the gap widens with N.
+
+The cost is flat with process turnover too, not just count. Under 3,330 forks per
+second at 379 live processes - the churn of a heavy parallel build - truetop reads
+every fork and exit in the kernel and reaps each departed process's counters, yet
+collection still sits at 1.7% of a core: its ceiling above, and below htop's 4.3%.
+The per-exit bookkeeping does not show up.
+
+This is the user-space cost; the kernel `sched_switch` price and the RSS trade-off
+are in the sections below.
 
 ## Running
 
@@ -102,7 +110,7 @@ Package names vary; the table above is the source of truth for what must be on
 | **micro**   | per-process collection work       | in-memory model, no `bpf()` call  | `cargo xtask bench micro`   |
 | **macro**   | data syscalls per refresh at scale | `strace` vs top / htop           | `cargo xtask bench macro`   |
 | **hotpath** | kernel cost per context switch    | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath` |
-| **selfcpu** | the tool's own CPU% and RSS       | sample `/proc` vs btop / htop     | `cargo xtask bench selfcpu` |
+| **selfcpu** | the tool's own CPU% and RSS, by process count and by churn | sample `/proc` vs btop / htop | `cargo xtask bench selfcpu` |
 | **switch**  | that cost under a switch storm    | `stress-ng --switch` vs btop / htop | `cargo xtask bench switch` |
 
 ## micro: per-process work

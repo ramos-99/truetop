@@ -42,6 +42,7 @@ bench/results/criterion/
 bench/results/macro.csv
 bench/results/hotpath.txt
 bench/results/selfcpu.csv
+bench/results/churn.txt
 bench/results/switch.csv
 bench/results/env.txt
 __pycache__/

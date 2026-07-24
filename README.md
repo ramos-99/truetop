@@ -160,7 +160,8 @@ Reproduce these with `cargo xtask bench`.
 
 | metric | truetop | htop / btop |
 | --- | --- | --- |
-| CPU at ~9,000 processes | 1.7% of a core, flat | 33% / 22%, climbing |
+| CPU at ~7,400 processes | 1.7% of a core, flat | 33% / 22%, climbing |
+| CPU under 3,300 forks/s churn | 1.7% of a core | 4.3% (htop) |
 | data syscalls per refresh at ~5,000 | ~780 | ~12,000 (htop) |
 | per-process collection work | ~30 ns | ~12 µs (procfs) |
 
