@@ -80,9 +80,11 @@ jobs:
       - run: cargo build -p xtask
       - run: cargo test -p truetop --no-run
 
+      # 14 jobs pull the same release asset at once, so a transient 5xx from the
+      # GitHub CDN is expected; retry rather than fail the run.
       - name: Fetch the matrix kernel
         run: |
-          curl -fL -o bzImage \
+          curl -fL --retry 5 --retry-delay 3 --retry-all-errors -o bzImage \
             "https://github.com/danobi/vmtest/releases/download/test_assets/bzImage-v${{ matrix.kernel }}-${{ matrix.variant }}"
 
       # vmtest boots that kernel with this same filesystem and runs the
