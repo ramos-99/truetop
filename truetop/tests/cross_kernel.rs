@@ -16,8 +16,8 @@ use std::{fs, thread, time::Duration};
 use anyhow::{Result, bail};
 use truetop::attach;
 
-/// A child forked from this process that never calls `execve`, spinning so the
-/// collector ranks it into the snapshot. Killed and reaped on drop.
+/// A child forked from this process that never calls `execve`, burning CPU so
+/// the collector ranks it into the snapshot. Killed and reaped on drop.
 struct ForkedChild(libc::pid_t);
 
 impl ForkedChild {
@@ -28,10 +28,20 @@ impl ForkedChild {
             -1 => bail!("fork: {}", std::io::Error::last_os_error()),
             0 => unsafe {
                 libc::alarm(10);
-                let mut spin = 0u64;
+                // Burn, then nap. On-CPU time is charged at switch-out, so a lone
+                // spinner that is never preempted (its own vCPU on an idle guest)
+                // would accrue nothing; the nap forces the switch that charges it.
+                let nap = libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 200_000,
+                };
                 loop {
-                    spin = spin.wrapping_add(1);
+                    let mut spin = 0u64;
+                    for i in 0..1_000_000u64 {
+                        spin = spin.wrapping_add(i);
+                    }
                     std::hint::black_box(spin);
+                    libc::nanosleep(&nap, std::ptr::null_mut());
                 }
             },
             pid => Ok(Self(pid)),
