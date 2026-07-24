@@ -11,7 +11,9 @@ constraints when generating or reviewing code.
 - **Kernel-space**: eBPF compiled to BPF bytecode
 - **User-space**: Rust (2024 edition)
 - **Frameworks**: `aya` + `aya-bpf`, `ratatui` + `crossterm`, `arc-swap`
-- **Minimum kernel**: Linux ≥ 5.10 (BTF + raw tracepoints)
+- **Minimum kernel**: the code targets Linux ≥ 5.10 (BTF + raw tracepoints, and
+  the pre-5.14 `state`-field path), but the tested and supported floor is 5.15 -
+  the oldest kernel CI runs. 5.10-5.14 may work, untested.
 - **CO-RE requirement**: `CONFIG_DEBUG_INFO_BTF=y`. Boot aborts gracefully if
   `/sys/kernel/btf/vmlinux` is missing.
 

@@ -9,7 +9,7 @@
 Per-process Linux monitor built on eBPF.
 
 [![CI](https://github.com/ramos-99/truetop/actions/workflows/ci.yml/badge.svg)](https://github.com/ramos-99/truetop/actions/workflows/ci.yml)
-[![kernel](https://img.shields.io/badge/Linux-%E2%89%A5%205.10-F76800?style=flat-square&logo=linux&logoColor=white)](#requirements)
+[![kernel](https://img.shields.io/badge/Linux-%E2%89%A5%205.15-F76800?style=flat-square&logo=linux&logoColor=white)](#requirements)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-2EA043?style=flat-square)](#license)
 
 <img src="assets/demo.gif" alt="truetop sorting by I/O wait: fio readers blocked on the disk light up red" width="820">
@@ -55,8 +55,10 @@ grow with the process count.
 
 ## Requirements
 
-- Linux 5.10 or newer on x86-64. CI runs the programs on live kernels 5.15
-  through 6.18. aarch64 compiles but is not tested at runtime.
+- Linux 5.15 or newer on x86-64, the range CI runs the programs on (5.15 through
+  6.18). The pre-5.14 `state`-field path is still in the code, so 5.10 through
+  5.14 may work, but as of today that is neither tested nor guaranteed. aarch64
+  compiles but is not tested at runtime.
 - A kernel built with `CONFIG_DEBUG_INFO_BTF=y`, so `/sys/kernel/btf/vmlinux`
   exists at runtime. Every mainstream distro ships this, and truetop aborts with
   a message naming the option if it is missing.
