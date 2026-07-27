@@ -7,11 +7,11 @@
 ![harness](https://img.shields.io/badge/harness-criterion_%C2%B7_strace_%C2%B7_bpftool-8250DF?style=flat-square)
 ![built with](https://img.shields.io/badge/Rust-2024-DEA584?style=flat-square&logo=rust&logoColor=white)
 
-Reference machine: AMD Ryzen 7 5800HS, 16 cores. Details and caveats below.
+Reference machine: AMD Ryzen 7 5800HS, 8 cores / 16 threads. Details and caveats below.
 
 | metric                              | truetop               | htop / btop           |
 | ----------------------------------- | --------------------- | --------------------- |
-| CPU at ~9,000 processes             | **1.7%** of a core, flat | 33% / 22%, climbing |
+| CPU at ~7,400 processes             | **1.7%** of a core, flat | 33% / 22%, climbing |
 | data syscalls per refresh at ~5,000 | **~780**              | ~12,000 (htop)        |
 | per-process collection work         | **~30 ns**            | ~12 µs (procfs)       |
 
@@ -53,6 +53,16 @@ The per-exit bookkeeping does not show up.
 
 This is the user-space cost; the kernel `sched_switch` price and the RSS trade-off
 are in the sections below.
+
+## At a glance
+
+|             | Measures                          | Method                            | Run                         |
+| ----------- | --------------------------------- | --------------------------------- | --------------------------- |
+| **micro**   | per-process collection work       | in-memory model, no `bpf()` call  | `cargo xtask bench micro`   |
+| **macro**   | data syscalls per refresh at scale | `strace` vs top / htop           | `cargo xtask bench macro`   |
+| **hotpath** | kernel cost per context switch    | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath` |
+| **selfcpu** | the tool's own CPU% and RSS, by process count and by churn | sample `/proc` vs btop / htop | `cargo xtask bench selfcpu` |
+| **switch**  | that cost under a switch storm    | `stress-ng --switch` vs btop / htop | `cargo xtask bench switch` |
 
 ## Running
 
@@ -103,16 +113,6 @@ Package names vary; the table above is the source of truth for what must be on
 `PATH`. `bpftool` ships with the kernel tools (`bpf` on Arch,
 `linux-tools-$(uname -r)` on Debian), and `hackbench` ships with `rt-tests`.
 
-## At a glance
-
-|             | Measures                          | Method                            | Run                         |
-| ----------- | --------------------------------- | --------------------------------- | --------------------------- |
-| **micro**   | per-process collection work       | in-memory model, no `bpf()` call  | `cargo xtask bench micro`   |
-| **macro**   | data syscalls per refresh at scale | `strace` vs top / htop           | `cargo xtask bench macro`   |
-| **hotpath** | kernel cost per context switch    | `bpftool` run stats + `hackbench` | `cargo xtask bench hotpath` |
-| **selfcpu** | the tool's own CPU% and RSS, by process count and by churn | sample `/proc` vs btop / htop | `cargo xtask bench selfcpu` |
-| **switch**  | that cost under a switch storm    | `stress-ng --switch` vs btop / htop | `cargo xtask bench switch` |
-
 ## micro: per-process work
 
 ```sh
@@ -133,7 +133,7 @@ insert and undercount what the collector actually does per process.
 
 Criterion writes a log-Y HTML report to `bench/results/criterion/`. Both lines
 rise linearly, and the eBPF one sits orders of magnitude lower. On the reference
-machine (AMD Ryzen 7 5800HS, 16 cores) that is roughly 30 ns per process for eBPF
+machine (AMD Ryzen 7 5800HS, 8 cores / 16 threads) that is roughly 30 ns per process for eBPF
 against 12 µs for procfs, about 400x. The figures are machine-specific, so
 regenerate them for yours; the shape holds.
 
@@ -226,7 +226,7 @@ functions and land in their own symbols, so the difference is what they cost. Th
 wall-clock overhead is a difference of two noisy runs, so it is order of magnitude
 only.
 
-Reference machine (Ryzen 7 5800HS, 16 cores, turbo off, `tsc` clocksource), under
+Reference machine (Ryzen 7 5800HS, 8 cores / 16 threads, turbo off, `tsc` clocksource), under
 `hackbench`: **~335 ns/event**, IQR [333, 337] (n=22), whole-system overhead
 single-digit percent. perf puts about a quarter of that in the program's own code
 and the rest in helper calls: the clock read, the `task_struct` probe reads, and
