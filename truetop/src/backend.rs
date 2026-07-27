@@ -6,7 +6,6 @@
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    os::fd::{AsFd, AsRawFd, RawFd},
     sync::Arc,
     time::Duration,
 };
@@ -18,9 +17,9 @@ use truetop_common::COMM_LEN;
 
 use crate::{
     batch::BatchReader,
+    cpu_maps::CpuMaps,
     metrics::{
         CpuCollector, CpuMetrics, IoMetrics, IoWaitCollector, MemReader, ProcessMetrics, Resolver,
-        Snapshot,
     },
     reaper::Reaper,
 };
@@ -52,7 +51,7 @@ pub struct SystemState {
 /// Owns the per-metric collectors; each [`Collector::tick`] reads the maps and
 /// produces the next snapshot.
 pub struct Collector {
-    cpu_ns: MapData,
+    cpu_maps: CpuMaps,
     iowait_ns: MapData,
     reader: BatchReader,
     cpu: CpuCollector,
@@ -67,8 +66,8 @@ pub struct Collector {
 }
 
 impl Collector {
-    pub fn new(
-        cpu_ns: MapData,
+    pub(crate) fn new(
+        cpu_maps: CpuMaps,
         iowait_ns: MapData,
         comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
         exits: RingBuf<MapData>,
@@ -76,7 +75,7 @@ impl Collector {
     ) -> Self {
         let ncpus = ncpus.max(1);
         Self {
-            cpu_ns,
+            cpu_maps,
             iowait_ns,
             reader: BatchReader::new(ncpus),
             cpu: CpuCollector::new(),
@@ -94,9 +93,9 @@ impl Collector {
     }
 
     pub fn tick(&mut self) -> SystemState {
-        let cpu_snap = read_counter(&mut self.reader, &self.cpu_ns);
+        let cpu_snap = self.cpu_maps.read(&mut self.reader);
         let cpu = self.cpu.deltas(cpu_snap);
-        let io_snap = read_counter(&mut self.reader, &self.iowait_ns);
+        let io_snap = self.reader.read_counter(&self.iowait_ns);
         let io = self.iowait.deltas(io_snap);
 
         let processes = select_candidates(&cpu, &io, MAX_ROWS)
@@ -111,8 +110,11 @@ impl Collector {
 
         // The reads above charged every process that ended this interval its full
         // time, including the short-lived ones; only now are those entries dropped.
-        self.reaper
-            .reap(&mut self.cpu_ns, &mut self.iowait_ns, &mut self.names);
+        self.reaper.reap(
+            self.cpu_maps.map_mut(),
+            &mut self.iowait_ns,
+            &mut self.names,
+        );
 
         SystemState {
             processes,
@@ -142,10 +144,6 @@ impl Collector {
             }),
         }
     }
-}
-
-fn read_counter(reader: &mut BatchReader, map: &MapData) -> Snapshot {
-    Snapshot::new(reader.sum_per_cpu(map.fd().as_fd().as_raw_fd() as RawFd))
 }
 
 /// The union of the top-`cap` pids by CPU and by I/O wait: whatever the renderer

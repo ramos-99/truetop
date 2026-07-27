@@ -28,7 +28,7 @@ pub fn sched_switch(ctx: RawTracePointContext) -> i32 {
     let prev_tgid = (prev >> 32) as u32;
 
     let next = Task::arg(&ctx, 2);
-    let next_tid = next.pid();
+    let (next_tid, next_tgid) = next.pid_and_tgid();
 
     // From the tracepoint arg where the kernel provides it (a register), else
     // probe-read prev's state. One binary covers 5.10+.
@@ -39,8 +39,8 @@ pub fn sched_switch(ctx: RawTracePointContext) -> i32 {
     };
 
     cpu::charge_out(prev_tid, prev_tgid, now);
-    cpu::mark_in(next_tid, now);
+    cpu::mark_in(next_tid, next_tgid, now);
     iowait::sleep_out(prev_state, prev_tid, now);
-    iowait::wake_in(&next, next_tid, now);
+    iowait::wake_in(next_tgid, next_tid, now);
     0
 }

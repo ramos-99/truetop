@@ -26,6 +26,28 @@ impl Task {
         self.read_u32(PID_OFFSET.load())
     }
 
+    /// `pid` (thread id) and `tgid` (process id) in a single probe-read. In
+    /// `task_struct` these are two adjacent `pid_t`s - `pid_t pid; pid_t tgid;`:
+    /// <https://elixir.bootlin.com/linux/v6.12/source/include/linux/sched.h#L1018>
+    /// - so an 8-byte load at `PID_OFFSET` yields both and halves the hotpath
+    /// reads. User space verifies the adjacency against the running kernel's BTF
+    /// before load (the assert in `load_ebpf`). `pid` sits in the word's low
+    /// half on a little-endian build (`bpfel`), high half on big-endian
+    /// (`bpfeb`, e.g. s390x) - `aya-build` picks the BPF target to match.
+    #[inline(always)]
+    pub fn pid_and_tgid(&self) -> (u32, u32) {
+        if self.0.is_null() {
+            return (0, 0);
+        }
+        let field = unsafe { self.0.add(PID_OFFSET.load() as usize) } as *const u64;
+        let word = unsafe { bpf_probe_read_kernel(field) }.unwrap_or(0);
+        if cfg!(target_endian = "big") {
+            ((word >> 32) as u32, word as u32)
+        } else {
+            (word as u32, (word >> 32) as u32)
+        }
+    }
+
     /// The thread-group id (the process id users see).
     #[inline(always)]
     pub fn tgid(&self) -> u32 {

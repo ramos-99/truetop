@@ -23,6 +23,10 @@ static START_TIME: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 // tgid → accumulated on-CPU nanoseconds (the counter user space diffs).
 #[map]
 static CPU_NS: PerCpuHashMap<u32, u64> = PerCpuHashMap::with_max_entries(16384, 0);
+// tgid of the thread currently on this CPU (0 = idle), paired with START_TIME so
+// user space can bill a running thread's in-flight slice at read (`add_inflight`).
+#[map]
+static CURRENT_TGID: PerCpuArray<u32> = PerCpuArray::with_max_entries(1, 0);
 
 /// Add the slice the outgoing thread just ran to its process total.
 #[inline(always)]
@@ -44,11 +48,15 @@ pub(crate) fn charge_out(tid: u32, tgid: u32, now: u64) {
     }
 }
 
-/// Stamp the incoming thread's schedule-in time in this CPU's slot.
+/// Record the incoming thread as the one now on this CPU.
 #[inline(always)]
-pub(crate) fn mark_in(tid: u32, now: u64) {
-    if tid == 0 {
-        return;
+pub(crate) fn mark_in(tid: u32, tgid: u32, now: u64) {
+    // START_TIME first: a user-space read landing between these two writes then
+    // pairs the outgoing tgid with a fresh timestamp - a sliver of nanoseconds
+    // misattributed - instead of the incoming tgid with a stale one, which on a
+    // CPU waking from a long idle could bill it the whole idle gap.
+    if tid != 0 {
+        let _ = START_TIME.set(0, now, 0);
     }
-    let _ = START_TIME.set(0, now, 0);
+    let _ = CURRENT_TGID.set(0, tgid, 0);
 }

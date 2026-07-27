@@ -13,8 +13,6 @@ use aya_ebpf::{
     maps::{HashMap, PerCpuHashMap},
 };
 
-use crate::task::Task;
-
 // include/linux/sched.h; NOLOAD excluded to skip TASK_IDLE kthreads.
 const TASK_UNINTERRUPTIBLE: u32 = 0x2;
 const TASK_NOLOAD: u32 = 0x400;
@@ -37,7 +35,7 @@ pub(crate) fn sleep_out(state: u32, tid: u32, now: u64) {
 }
 
 #[inline(always)]
-pub(crate) fn wake_in(next: &Task, tid: u32, now: u64) {
+pub(crate) fn wake_in(tgid: u32, tid: u32, now: u64) {
     if tid == 0 {
         return;
     }
@@ -45,7 +43,6 @@ pub(crate) fn wake_in(next: &Task, tid: u32, now: u64) {
         return;
     };
     let _ = SLEEP_SINCE.remove(tid);
-    let tgid = next.tgid();
     if tgid == 0 {
         return;
     }

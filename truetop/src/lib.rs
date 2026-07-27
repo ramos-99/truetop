@@ -12,6 +12,7 @@ mod backend;
 mod batch;
 mod btf;
 mod cli;
+mod cpu_maps;
 pub mod metrics;
 mod reaper;
 mod system;
@@ -26,11 +27,12 @@ use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use aya::{
     EbpfLoader,
-    maps::{HashMap, Map, RingBuf},
+    maps::{HashMap, Map, PerCpuArray, RingBuf},
     programs::RawTracePoint,
     util::nr_cpus,
 };
 pub use backend::{Collector, SystemState};
+use cpu_maps::CpuMaps;
 // Exposed for the batch integration test, not part of the stable API.
 #[doc(hidden)]
 pub use batch::BatchReader;
@@ -112,6 +114,12 @@ fn privilege_hint(err: &anyhow::Error) -> Option<&'static str> {
 fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
     let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
     let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
+    // The sched_switch hotpath reads pid and tgid in one 8-byte load
+    // (`task::pid_and_tgid`), which requires them adjacent.
+    anyhow::ensure!(
+        tgid == pid + 4,
+        "task_struct pid ({pid}) and tgid ({tgid}) are not adjacent in this kernel"
+    );
     let state = state_offset()?;
     // A miss falls back to the probe-read path, correct on any kernel.
     let has_prev_state = btf::sched_switch_has_prev_state().unwrap_or(false);
@@ -164,9 +172,18 @@ fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
         HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
     let exits: RingBuf<_> =
         RingBuf::try_from(ebpf.take_map("EXITS").context("EXITS map not found")?)?;
+    let start_time: PerCpuArray<_, u64> = PerCpuArray::try_from(
+        ebpf.take_map("START_TIME")
+            .context("START_TIME map not found")?,
+    )?;
+    let current_tgid: PerCpuArray<_, u32> = PerCpuArray::try_from(
+        ebpf.take_map("CURRENT_TGID")
+            .context("CURRENT_TGID map not found")?,
+    )?;
     let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
 
-    Ok(Collector::new(cpu_ns, iowait_ns, comm, exits, ncpus))
+    let cpu_maps = CpuMaps::new(cpu_ns, start_time, current_tgid);
+    Ok(Collector::new(cpu_maps, iowait_ns, comm, exits, ncpus))
 }
 
 fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {

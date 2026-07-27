@@ -5,7 +5,15 @@
 //! Both need the raw fd, which only `MapData` exposes - and holding `MapData`,
 //! rather than a typed map, is what forecloses aya's typed `remove` here.
 
-use std::{collections::HashMap, io, os::fd::RawFd};
+use std::{
+    collections::HashMap,
+    io,
+    os::fd::{AsFd, AsRawFd, RawFd},
+};
+
+use aya::maps::MapData;
+
+use crate::metrics::Snapshot;
 
 // uapi/linux/bpf.h `bpf_cmd`.
 const DELETE_ELEM: libc::c_long = 3;
@@ -74,6 +82,14 @@ impl BatchReader {
             }
         }
         totals
+    }
+
+    /// A per-CPU counter map, summed and timestamped as a [`Snapshot`]; the
+    /// caller diffs it against the previous one for a per-interval rate. The
+    /// shared read path for every metric backed by one of these maps (CPU,
+    /// I/O wait).
+    pub(crate) fn read_counter(&mut self, map: &MapData) -> Snapshot {
+        Snapshot::new(self.sum_per_cpu(map.fd().as_fd().as_raw_fd()))
     }
 
     /// One batch call; returns the entries written, or `None` once exhausted.
