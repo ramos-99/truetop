@@ -142,9 +142,13 @@ impl App {
 
 // ── Entry & loop ─────────────────────────────────────────────────────────────
 
-pub fn render_app(state: Arc<ArcSwap<SystemState>>, running: Arc<AtomicBool>) -> io::Result<()> {
+pub fn render_app(
+    state: Arc<ArcSwap<SystemState>>,
+    running: Arc<AtomicBool>,
+    machine: Machine,
+) -> io::Result<()> {
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &state, &running);
+    let result = event_loop(&mut terminal, &state, &running, &machine);
     ratatui::restore();
     result
 }
@@ -153,10 +157,10 @@ fn event_loop(
     terminal: &mut DefaultTerminal,
     state: &ArcSwap<SystemState>,
     running: &AtomicBool,
+    machine: &Machine,
 ) -> io::Result<()> {
     let mut app = App::new();
     let mut shown = state.load_full();
-    let machine = Machine::detect(shown.ncpus);
     let mut last: *const SystemState = Arc::as_ptr(&shown);
     let mut redraw = true;
 
@@ -184,7 +188,7 @@ fn event_loop(
         }
 
         if redraw {
-            terminal.draw(|frame| draw(frame, &shown, &machine, &mut app))?;
+            terminal.draw(|frame| draw(frame, &shown, machine, &mut app))?;
             redraw = false;
         }
     }
@@ -303,7 +307,10 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::{Terminal, backend::TestBackend};
+
     use super::*;
+    use crate::metrics::ProcessMetrics;
 
     #[test]
     fn format_bytes_keeps_raw_count_below_one_kib() {
@@ -354,5 +361,53 @@ mod tests {
         assert!(app.paused);
         app.handle_key(KeyCode::Char(' '));
         assert!(!app.paused);
+    }
+
+    /// The identity row of a full frame. The clock is right-aligned on that row
+    /// and moves every second, so it is cut off.
+    fn identity_line(state: &SystemState) -> String {
+        const WIDTH: u16 = 90;
+        const CLOCK: u16 = 10;
+
+        let machine = Machine {
+            hostname: "testhost".into(),
+            cpu_model: "Test CPU".into(),
+            cores: 8,
+            memory_total_bytes: 16 << 30,
+        };
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, 24)).expect("test terminal");
+        terminal
+            .draw(|frame| draw(frame, state, &machine, &mut App::new()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..WIDTH - CLOCK)
+            .filter_map(|x| buffer.cell((x, 0)).map(|cell| cell.symbol()))
+            .collect()
+    }
+
+    /// The renderer draws its first frame before the collector has ticked. The
+    /// header used to read its core count off that empty snapshot and rendered
+    /// "0 cores" into the README's demo, so what it shows must not depend on the
+    /// metrics at all.
+    #[test]
+    fn the_identity_line_does_not_depend_on_the_snapshot() {
+        let populated = SystemState {
+            processes: vec![ProcessMetrics {
+                pid: 1,
+                name: "init".into(),
+                ..ProcessMetrics::default()
+            }],
+            memory_used_bytes: 4 << 30,
+            memory_total_bytes: 8 << 30,
+            load_average: 1.5,
+            ..SystemState::default()
+        };
+        let before_the_first_tick = identity_line(&SystemState::default());
+
+        assert_eq!(before_the_first_tick, identity_line(&populated));
+        assert!(
+            before_the_first_tick.contains("8 cores"),
+            "{before_the_first_tick}"
+        );
     }
 }

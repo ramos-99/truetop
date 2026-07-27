@@ -29,13 +29,13 @@ use aya::{
     EbpfLoader,
     maps::{HashMap, Map, PerCpuArray, RingBuf},
     programs::RawTracePoint,
-    util::nr_cpus,
 };
 pub use backend::{Collector, SystemState};
 // Exposed for the batch integration test, not part of the stable API.
 #[doc(hidden)]
 pub use batch::BatchReader;
 use cpu_maps::CpuMaps;
+use system::{CpuCounts, Machine};
 use tokio::signal;
 use truetop_common::COMM_LEN;
 
@@ -53,11 +53,13 @@ pub async fn run() -> anyhow::Result<()> {
     env_logger::init();
     raise_memlock();
 
-    let (ebpf, collector) = attach().map_err(diagnose)?;
+    let cpus = CpuCounts::detect()?;
+    log::info!("CPUs - {} possible, {} online", cpus.possible, cpus.online);
+    let (ebpf, collector) = attach_with(cpus).map_err(diagnose)?;
 
     match ticks {
         Some(ticks) => backend::run_headless(collector, ticks),
-        None => run_ui(collector).await?,
+        None => run_ui(collector, cpus).await?,
     }
 
     // `ebpf` owns the tracepoint links; dropping it here detaches them.
@@ -82,8 +84,13 @@ fn raise_memlock() {
 /// [`aya::Ebpf`] owns the tracepoint links - keep it alive for the collector's
 /// lifetime.
 pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
+    attach_with(CpuCounts::detect()?)
+}
+
+/// [`attach`] over an already-resolved topology, so one process reads it once.
+fn attach_with(cpus: CpuCounts) -> anyhow::Result<(aya::Ebpf, Collector)> {
     let mut ebpf = load_ebpf()?;
-    let collector = setup_collector(&mut ebpf)?;
+    let collector = setup_collector(&mut ebpf, cpus)?;
     Ok((ebpf, collector))
 }
 
@@ -154,7 +161,7 @@ fn state_offset() -> anyhow::Result<u32> {
 
 /// Attach the tracepoints and build a [`Collector`] over the CPU and comm maps.
 /// `ebpf` must outlive the collector - it owns the tracepoint links.
-fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
+fn setup_collector(ebpf: &mut aya::Ebpf, cpus: CpuCounts) -> anyhow::Result<Collector> {
     for tp in [
         "sched_switch",
         "sched_process_exec",
@@ -180,10 +187,8 @@ fn setup_collector(ebpf: &mut aya::Ebpf) -> anyhow::Result<Collector> {
         ebpf.take_map("CURRENT_TGID")
             .context("CURRENT_TGID map not found")?,
     )?;
-    let ncpus = nr_cpus().map_err(|(s, e)| anyhow::anyhow!("{s}: {e}"))?;
-
     let cpu_maps = CpuMaps::new(cpu_ns, start_time, current_tgid);
-    Ok(Collector::new(cpu_maps, iowait_ns, comm, exits, ncpus))
+    Ok(Collector::new(cpu_maps, iowait_ns, comm, exits, cpus))
 }
 
 fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {
@@ -198,7 +203,7 @@ fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps
 
 /// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a
 /// SIGINT/SIGTERM listener - until the user quits.
-async fn run_ui(collector: Collector) -> anyhow::Result<()> {
+async fn run_ui(collector: Collector, cpus: CpuCounts) -> anyhow::Result<()> {
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
     let running = Arc::new(AtomicBool::new(true));
 
@@ -209,7 +214,11 @@ async fn run_ui(collector: Collector) -> anyhow::Result<()> {
         signal_running.store(false, Ordering::Relaxed);
     });
 
-    let result = ui::render_app(Arc::clone(&shared), Arc::clone(&running));
+    let result = ui::render_app(
+        Arc::clone(&shared),
+        Arc::clone(&running),
+        Machine::detect(cpus),
+    );
 
     running.store(false, Ordering::Relaxed);
     collector_task.abort();

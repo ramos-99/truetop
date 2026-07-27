@@ -61,7 +61,7 @@ pub struct BatchReader {
 }
 
 impl BatchReader {
-    /// `nr_cpus` must be the *possible* CPU count (`aya::util::nr_cpus`): the
+    /// `nr_cpus` must be the *possible* CPU count (`CpuCounts::possible`): the
     /// kernel writes one value slot per possible CPU per key.
     pub fn new(nr_cpus: usize) -> Self {
         Self {

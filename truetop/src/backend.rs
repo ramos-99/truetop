@@ -22,6 +22,7 @@ use crate::{
         CpuCollector, CpuMetrics, IoMetrics, IoWaitCollector, MemReader, ProcessMetrics, Resolver,
     },
     reaper::Reaper,
+    system::CpuCounts,
 };
 
 /// Rows enriched (name/user/RSS via `/proc`) per sortable metric. The renderer
@@ -45,7 +46,6 @@ pub struct SystemState {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub load_average: f64,
-    pub ncpus: usize,
 }
 
 /// Owns the per-metric collectors; each [`Collector::tick`] reads the maps and
@@ -59,7 +59,7 @@ pub struct Collector {
     names: Resolver,
     mem: MemReader,
     reaper: Reaper,
-    ncpus: usize,
+    online_cpus: usize,
     memory_total_bytes: u64,
     cpu_history: VecDeque<f64>,
     io_history: VecDeque<f64>,
@@ -71,19 +71,18 @@ impl Collector {
         iowait_ns: MapData,
         comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
         exits: RingBuf<MapData>,
-        ncpus: usize,
+        cpus: CpuCounts,
     ) -> Self {
-        let ncpus = ncpus.max(1);
         Self {
             cpu_maps,
             iowait_ns,
-            reader: BatchReader::new(ncpus),
+            reader: BatchReader::new(cpus.possible),
             cpu: CpuCollector::new(),
             iowait: IoWaitCollector::new(),
             names: Resolver::new(comm),
             mem: MemReader::new(),
             reaper: Reaper::new(exits),
-            ncpus,
+            online_cpus: cpus.online,
             memory_total_bytes: crate::system::memory_total_bytes(),
             // Filled with a flat baseline so the charts span their panel from the
             // first tick instead of drawing into a mostly empty axis.
@@ -103,7 +102,7 @@ impl Collector {
             .map(|pid| self.enrich(pid, &cpu, &io))
             .collect();
 
-        let total_cpu_percent = cpu.values().sum::<f64>() / self.ncpus as f64;
+        let total_cpu_percent = cpu.values().sum::<f64>() / self.online_cpus as f64;
         let total_io_percent = io.values().sum();
         push_capped(&mut self.cpu_history, total_cpu_percent);
         push_capped(&mut self.io_history, total_io_percent);
@@ -125,7 +124,6 @@ impl Collector {
             memory_used_bytes: crate::system::memory_used_bytes(self.memory_total_bytes),
             memory_total_bytes: self.memory_total_bytes,
             load_average: crate::system::load_average(),
-            ncpus: self.ncpus,
         }
     }
 

@@ -182,3 +182,35 @@ fn clock() -> String {
         format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    use super::*;
+
+    /// The clock shares this row and moves every second, so the assertion covers
+    /// the left of the line rather than the whole of it.
+    #[test]
+    fn the_identity_line_states_the_host_it_was_given() {
+        let machine = Machine {
+            hostname: "testhost".into(),
+            cpu_model: "Test CPU".into(),
+            cores: 8,
+            memory_total_bytes: 16 << 30,
+        };
+
+        let mut terminal = Terminal::new(TestBackend::new(90, 1)).expect("test terminal");
+        terminal
+            .draw(|frame| draw_identity(frame, &machine, frame.area()))
+            .expect("draw");
+        let line: String = (0..90)
+            .filter_map(|x| terminal.backend().buffer().cell((x, 0)).map(|c| c.symbol()))
+            .collect();
+
+        assert!(
+            line.starts_with(" truet◎p testhost · Test CPU · 8 cores · 16.0 G"),
+            "{line}"
+        );
+    }
+}
