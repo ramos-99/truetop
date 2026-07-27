@@ -32,10 +32,10 @@ use aya::{
     util::nr_cpus,
 };
 pub use backend::{Collector, SystemState};
-use cpu_maps::CpuMaps;
 // Exposed for the batch integration test, not part of the stable API.
 #[doc(hidden)]
 pub use batch::BatchReader;
+use cpu_maps::CpuMaps;
 use tokio::signal;
 use truetop_common::COMM_LEN;
 
