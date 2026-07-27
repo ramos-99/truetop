@@ -16,6 +16,9 @@ _The I/O-wait column `top`, `htop` and `btop` don't have._
 [![Rust](https://img.shields.io/badge/Rust-2024-DEA584?style=for-the-badge&logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/MIT%20or%20Apache--2.0-2EA043?style=for-the-badge)](#license)
 
+[![Contributing](https://img.shields.io/badge/Contributing-guide-2B3137?style=for-the-badge&logo=git&logoColor=white)](CONTRIBUTING.md)
+[![Security policy](https://img.shields.io/badge/Security-policy-2B3137?style=for-the-badge&logo=letsencrypt&logoColor=white)](SECURITY.md)
+
 <img src="assets/demo.gif" alt="truetop sorting by I/O wait: fio readers blocked on the disk light up red" width="820">
 
 </div>
@@ -30,7 +33,7 @@ grow with the process count.
 
 ## Contents
 
-[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [Memory](#memory) · [Roadmap](#roadmap) · [Security](#security) · [License](#license)
+[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [Memory](#memory) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Security](#security) · [License](#license)
 
 ## Features
 
@@ -90,8 +93,12 @@ cargo build --release
 or install straight from git:
 
 ```sh
-cargo install --git https://github.com/ramos-99/truetop truetop
+cargo install --locked --git https://github.com/ramos-99/truetop truetop
 ```
+
+`--locked` is not optional: without it `cargo install --git` ignores `Cargo.lock`
+and resolves the dependency graph afresh, so the build you get is not the build
+CI tested.
 
 Prebuilt releases and an AUR package are on the [roadmap](#roadmap).
 
@@ -202,6 +209,13 @@ memory moves in-kernel with everything else.
 - Memory in-kernel, once an accurate per-process interface exists.
 - Kernels 5.10 through 5.13 in CI, which take the pre-5.14 `state` field path,
   and aarch64 at runtime.
+
+## Contributing
+
+The toolchain, the three test layers (unit, root-only integration, and the
+14-kernel VM matrix) and the benchmark harness are documented in
+[CONTRIBUTING.md](CONTRIBUTING.md). Bug reports want `uname -a`, the distro and
+the architecture; a CO-RE issue cannot be triaged without them.
 
 ## Security
 
