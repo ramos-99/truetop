@@ -153,10 +153,14 @@ fn select_candidates(cpu: &Deltas, io: &Deltas, cap: usize) -> Vec<u32> {
     pids.into_iter().collect()
 }
 
+/// The `cap` highest-valued pids, unordered: the caller unions them into a set,
+/// so partitioning around the cut is enough and sorting the rest is waste.
 fn top_pids(values: &Deltas, cap: usize) -> Vec<u32> {
     let mut ranked: Vec<(u32, f64)> = values.iter().map(|(&pid, &v)| (pid, v)).collect();
-    ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1));
-    ranked.truncate(cap);
+    if ranked.len() > cap {
+        ranked.select_nth_unstable_by(cap, |a, b| b.1.total_cmp(&a.1));
+        ranked.truncate(cap);
+    }
     ranked.into_iter().map(|(pid, _)| pid).collect()
 }
 
@@ -190,6 +194,13 @@ pub fn run_headless(mut collector: Collector, ticks: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_pids_selects_by_value_not_by_order() {
+        let cpu = Deltas::from([(1, 1.0), (2, 5.0), (3, 3.0), (4, 4.0), (5, 2.0)]);
+        let top: HashSet<u32> = top_pids(&cpu, 3).into_iter().collect();
+        assert_eq!(top, HashSet::from([2, 4, 3]));
+    }
 
     #[test]
     fn candidates_union_top_cpu_and_top_io() {
