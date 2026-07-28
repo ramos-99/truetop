@@ -27,9 +27,9 @@ _The I/O-wait column `top`, `htop` and `btop` don't have._
 
 truetop shows per-process CPU, memory, and one column `top`, `htop` and `btop`
 do not have: how long each process sat blocked on storage. Everything except
-memory is collected inside the kernel by O(1)-per-event eBPF programs and
-drained in a single batched syscall per refresh, so collection cost does not
-grow with the process count.
+memory is collected inside the kernel by O(1)-per-event eBPF programs and drained
+in batched reads rather than one syscall per process, so collection cost tracks
+the context-switch rate rather than how many processes are running.
 
 ## Contents
 
@@ -51,8 +51,8 @@ grow with the process count.
 - **Batched collection.** CPU and I/O wait accumulate on `sched_switch`, and each
   refresh drains the maps with `bpf_map_lookup_batch`, thousands of processes per
   syscall instead of one syscall per process. The maps hold 65,536 processes by
-  default; past that they evict the coldest entry rather than refusing new ones,
-  and the status line says so.
+  default on ordinary hardware; past capacity they evict the coldest entry rather
+  than refusing new ones, and the status line says so.
 
 - **One binary across kernels.** `task_struct` offsets are resolved from the
   kernel's own BTF at load and injected as constants, without libbpf. CI runs
@@ -174,6 +174,12 @@ in user space.
 
 ## Benchmarks
 
+> [!NOTE]
+> Being re-measured. The batched read was truncating above roughly 4,000
+> processes until July 2026, so the rows below that mention larger counts
+> measured a collector doing less work than it should have. The method holds; the
+> numbers move. [Details](bench/BENCHMARKS.md).
+
 Reproduce these with `cargo xtask bench`.
 
 | metric | truetop | htop / btop |
@@ -190,8 +196,9 @@ Method, full results and the kernel-side cost are in
 
 `sched_switch` fires on every context switch, so truetop's cost scales with the
 context-switch rate rather than the process count. The per-event program is O(1)
-and measured at a median of ~335 ns on the reference machine, which is small but
-not free: under a `hackbench` context-switch storm it costs single-digit percent
+and measured at a median of ~335 ns on the reference machine, a figure currently
+under re-measurement, since recent runs on that same machine read higher. It is
+small but not free: under a `hackbench` context-switch storm it costs single-digit percent
 of wall clock, while an ordinary system does orders of magnitude fewer switches
 and pays well under 1%.
 
@@ -205,18 +212,18 @@ before deploying on latency-sensitive hosts.
 
 Everything about a process's *behaviour* comes from the kernel: CPU time, I/O
 wait, and the name and owning user of anything that starts while truetop runs.
-Three things do not, and they are worth naming rather than leaving to be
-discovered under `strace`:
+What does not is listed here, rather than left to be found under `strace`:
 
 | what | when | why |
 | --- | --- | --- |
 | RSS, from `statm` | per visible row, per refresh | no eBPF interface gives an exact figure, see below |
 | names and uids of processes that predate truetop | once, at startup | a `bpf_iter` task walk would do it in-kernel, see [Roadmap](#roadmap) |
-| `meminfo`, `loadavg`, hostname, CPU model | one small file each, per refresh | machine-wide, so the cost is constant, not per process |
+| `meminfo` and `loadavg`, for the header | two small files, per refresh | machine-wide, so the cost is constant, not per process |
+| hostname, CPU model, total memory | once, at startup | the same, and they do not change |
 
 Only the first is permanent. The second is the last O(N) procfs scan in the tool
-and is on its way out; the third is four files a second regardless of whether the
-machine runs fifty processes or fifty thousand.
+and is on its way out. The rest is two files a second, whether the machine runs
+fifty processes or fifty thousand.
 
 RSS comes from `/proc/<pid>/statm` in user space, read only for the rows on
 screen, so the cost stays bounded regardless of process count.
