@@ -22,13 +22,14 @@ const BRAND: (&str, &str, &str) = ("truet", "◎", "p");
 
 pub(super) fn draw_identity(frame: &mut Frame, machine: &Machine, area: Rect) {
     let specs = format!(
-        " {} · {} · {} cores · {} ",
+        "{} · {} · {} cores · {}",
         machine.hostname,
         machine.cpu_model,
         machine.cores,
         format_bytes(machine.memory_total_bytes)
     );
-    let left = Line::from(vec![
+    // Three lines over one row: wordmark left, specs centred, clock right.
+    let wordmark = Line::from(vec![
         Span::raw(" "),
         Span::styled(
             BRAND.0,
@@ -42,9 +43,12 @@ pub(super) fn draw_identity(frame: &mut Frame, machine: &Machine, area: Rect) {
             BRAND.2,
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(specs, Style::new().fg(theme::DIM)),
     ]);
-    frame.render_widget(left, area);
+    frame.render_widget(wordmark, area);
+    frame.render_widget(
+        Line::from(Span::styled(specs, Style::new().fg(theme::DIM))).alignment(Alignment::Center),
+        area,
+    );
     frame.render_widget(
         Line::from(Span::styled(
             format!("{} ", clock()),
@@ -101,7 +105,7 @@ pub(super) fn draw_summary(frame: &mut Frame, state: &SystemState, area: Rect) {
     ));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        format!("{} tasks", state.processes.len()),
+        format!("{} tasks", state.tracked),
         Style::new().fg(theme::DIM),
     ));
     frame.render_widget(Line::from(spans), area);
@@ -208,8 +212,9 @@ mod tests {
             .filter_map(|x| terminal.backend().buffer().cell((x, 0)).map(|c| c.symbol()))
             .collect();
 
+        assert!(line.starts_with(" truet◎p "), "{line}");
         assert!(
-            line.starts_with(" truet◎p testhost · Test CPU · 8 cores · 16.0 G"),
+            line.contains("testhost · Test CPU · 8 cores · 16.0 G"),
             "{line}"
         );
     }

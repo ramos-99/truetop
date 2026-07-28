@@ -36,16 +36,29 @@ const HISTORY: usize = 120;
 /// Per-pid CPU% and I/O-wait% for one tick.
 type Deltas = HashMap<u32, f64>;
 
+/// One tick's snapshot, published whole and never mutated. Raw values only; the
+/// renderer formats them, and only for the rows it draws.
 #[derive(Debug, Clone, Default)]
 pub struct SystemState {
+    /// The rows worth enriching - the top of each metric, not every process.
     pub processes: Vec<ProcessMetrics>,
+    /// Machine-wide CPU over the last `HISTORY` ticks, oldest first.
     pub cpu_history: VecDeque<f64>,
+    /// The same for I/O wait.
     pub io_history: VecDeque<f64>,
+    /// CPU used this tick, as a share of the online cores.
     pub total_cpu_percent: f64,
+    /// I/O wait this tick, summed across processes rather than normalised.
     pub total_io_percent: f64,
+    /// Memory in use: total minus available, the figure `free` reports as used.
     pub memory_used_bytes: u64,
+    /// Installed memory.
     pub memory_total_bytes: u64,
+    /// The one-minute load average.
     pub load_average: f64,
+    /// Processes the kernel is accounting for, which is all of them that have
+    /// run, not just the rows above.
+    pub tracked: usize,
     /// The counter map is full, so it is evicting to make room. Accounting stays
     /// honest, but a process that has been idle a while may report 0% for one
     /// tick after it runs again.
@@ -141,6 +154,7 @@ impl Collector {
             memory_used_bytes: crate::system::memory_used_bytes(self.memory_total_bytes),
             memory_total_bytes: self.memory_total_bytes,
             load_average: crate::system::load_average(),
+            tracked,
             at_capacity: tracked >= self.capacity,
         }
     }

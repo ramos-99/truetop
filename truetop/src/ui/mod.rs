@@ -369,7 +369,7 @@ mod tests {
         assert!(!app.paused);
     }
 
-    const WIDTH: u16 = 90;
+    const WIDTH: u16 = 120;
     const HEIGHT: u16 = 24;
 
     fn rows(state: &SystemState) -> Vec<String> {
@@ -406,6 +406,13 @@ mod tests {
         rows(state).pop().expect("a status row")
     }
 
+    fn summary_line(state: &SystemState) -> String {
+        rows(state)
+            .into_iter()
+            .find(|row| row.contains("load "))
+            .expect("a summary row")
+    }
+
     /// The renderer draws its first frame before the collector has ticked. The
     /// header used to read its core count off that empty snapshot and rendered
     /// "0 cores" into the README's demo, so what it shows must not depend on the
@@ -430,6 +437,20 @@ mod tests {
             before_the_first_tick.contains("8 cores"),
             "{before_the_first_tick}"
         );
+    }
+
+    /// The count used to come off the row list, which holds the top of each
+    /// metric and so stops at 512 however many processes are running.
+    #[test]
+    fn the_summary_counts_processes_not_visible_rows() {
+        let state = SystemState {
+            processes: vec![ProcessMetrics::default()],
+            tracked: 4242,
+            ..SystemState::default()
+        };
+        let summary = summary_line(&state);
+
+        assert!(summary.contains("4242 tasks"), "{summary}");
     }
 
     #[test]
