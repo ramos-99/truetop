@@ -28,10 +28,11 @@ impl CpuCollector {
     /// Per-process CPU% for the interval, keyed by pid. First-sight pids read 0%
     /// (no baseline); multithreaded processes can exceed 100%.
     ///
-    /// A process whose counter was evicted from the full LRU map and then ran
-    /// again is first-sight too, so it reads 0% for one interval before
-    /// reporting normally. That is the shape capacity pressure takes here: a
-    /// stale reading for a tick, not a process missing for its lifetime.
+    /// A counter that goes backwards reads 0% for one interval and then reports
+    /// normally. Two things do that: an entry evicted from a full LRU map and
+    /// re-created when its process next runs, and a recycled pid inheriting the
+    /// larger total of the dead process that held it. Both resolve themselves on
+    /// the following tick.
     pub(crate) fn deltas(&mut self, current: Snapshot) -> HashMap<u32, f64> {
         let elapsed_ns = current.elapsed_ns_since(&self.prev);
         let out = current
@@ -109,6 +110,8 @@ mod tests {
         assert!((out[&1] - 800.0).abs() < 1e-6);
     }
 
+    /// Eviction and pid reuse both land here: the counter is smaller than the
+    /// baseline, so the interval reads zero rather than a negative rate.
     #[test]
     fn saturates_on_counter_reset() {
         let base = Instant::now();

@@ -11,6 +11,7 @@ mod bench;
 mod btf_fixtures;
 mod privilege;
 mod runner;
+mod style;
 
 use anyhow::{Result, bail};
 
