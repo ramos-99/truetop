@@ -219,7 +219,9 @@ pub fn run_headless(mut collector: Collector, ticks: u32) {
     for i in 1..=ticks {
         std::thread::sleep(Duration::from_secs(1));
         let snapshot = collector.tick();
-        println!("tick {i}/{ticks}: {} processes", snapshot.processes.len());
+        // `tracked`, not the row count: the benchmarks log this, and the rows
+        // stop at MAX_ROWS however many processes are running.
+        println!("tick {i}/{ticks}: {} processes", snapshot.tracked);
     }
 }
 

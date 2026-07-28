@@ -19,8 +19,9 @@ impl MemReader {
         }
     }
 
-    /// Exact RSS from `/proc/<tgid>/statm`. `None` if the process exited between
-    /// the snapshot and this read.
+    /// Exact RSS from `/proc/<tgid>/statm`. `None` once the process is gone and
+    /// the file with it; a zombie reads zero, which is the truth - it has
+    /// released its memory but not yet its exit status.
     pub(crate) fn for_pid(&self, tgid: u32) -> Option<MemMetrics> {
         let statm = std::fs::read_to_string(format!("/proc/{tgid}/statm")).ok()?;
         Some(MemMetrics {
@@ -49,6 +50,12 @@ mod tests {
     fn parse_statm_reads_resident_pages() {
         assert_eq!(parse_statm_pages("4096 512 64 1 0 128 0"), Some(512));
         assert_eq!(parse_statm_pages("  4096   512  "), Some(512));
+    }
+
+    /// What `/proc/<pid>/statm` holds for a zombie, verified against a real one.
+    #[test]
+    fn parse_statm_reads_a_zombie_as_zero() {
+        assert_eq!(parse_statm_pages("0 0 0 0 0 0 0"), Some(0));
     }
 
     #[test]

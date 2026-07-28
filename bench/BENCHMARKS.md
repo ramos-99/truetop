@@ -270,6 +270,14 @@ Four changes, same machine:
 Each step's A/B had non-overlapping IQRs. Numbers are machine-specific; re-run for
 yours.
 
+### Capacity is not what these measure
+
+No benchmark here reaches the accounting maps' capacity, and none should: a
+saturated map evicts, so the run would measure degraded behaviour rather than the
+design. The margin is deliberate - `selfcpu` tops out at 10,000 processes and
+`macro` at 5,000, against a default capacity of 65,536. Scaling either past that
+means raising `--max-processes` in the same change.
+
 ### What capacity costs
 
 The accounting maps were plain per-CPU hashes of a fixed 16,384 entries, and a
