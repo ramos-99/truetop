@@ -226,10 +226,10 @@ fn draw(frame: &mut Frame, state: &SystemState, machine: &Machine, app: &mut App
         app.selection.select(Some(app.rows.saturating_sub(1)));
     }
 
-    draw_status(frame, app, areas[4]);
+    draw_status(frame, app, state, areas[4]);
 }
 
-fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_status(frame: &mut Frame, app: &App, state: &SystemState, area: Rect) {
     if app.editing_filter {
         frame.render_widget(
             Line::from(vec![
@@ -266,6 +266,12 @@ fn draw_status(frame: &mut Frame, app: &App, area: Rect) {
     if app.paused {
         spans.push(Span::styled(
             "  paused",
+            Style::new().fg(theme::IO).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if state.at_capacity {
+        spans.push(Span::styled(
+            "  at capacity, raise --max-processes",
             Style::new().fg(theme::IO).add_modifier(Modifier::BOLD),
         ));
     }
@@ -363,26 +369,41 @@ mod tests {
         assert!(!app.paused);
     }
 
-    /// The identity row of a full frame. The clock is right-aligned on that row
-    /// and moves every second, so it is cut off.
-    fn identity_line(state: &SystemState) -> String {
-        const WIDTH: u16 = 90;
-        const CLOCK: u16 = 10;
+    const WIDTH: u16 = 90;
+    const HEIGHT: u16 = 24;
 
+    fn rows(state: &SystemState) -> Vec<String> {
         let machine = Machine {
             hostname: "testhost".into(),
             cpu_model: "Test CPU".into(),
             cores: 8,
             memory_total_bytes: 16 << 30,
         };
-        let mut terminal = Terminal::new(TestBackend::new(WIDTH, 24)).expect("test terminal");
+        let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test terminal");
         terminal
             .draw(|frame| draw(frame, state, &machine, &mut App::new()))
             .expect("draw");
         let buffer = terminal.backend().buffer();
-        (0..WIDTH - CLOCK)
-            .filter_map(|x| buffer.cell((x, 0)).map(|cell| cell.symbol()))
+        (0..HEIGHT)
+            .map(|y| {
+                (0..WIDTH)
+                    .filter_map(|x| buffer.cell((x, y)).map(|cell| cell.symbol()))
+                    .collect()
+            })
             .collect()
+    }
+
+    /// Row 0 without the right-aligned clock, which moves every second.
+    fn identity_line(state: &SystemState) -> String {
+        const CLOCK: usize = 10;
+        rows(state)[0]
+            .chars()
+            .take(WIDTH as usize - CLOCK)
+            .collect()
+    }
+
+    fn status_line(state: &SystemState) -> String {
+        rows(state).pop().expect("a status row")
     }
 
     /// The renderer draws its first frame before the collector has ticked. The
@@ -409,5 +430,15 @@ mod tests {
             before_the_first_tick.contains("8 cores"),
             "{before_the_first_tick}"
         );
+    }
+
+    #[test]
+    fn a_saturated_map_is_said_out_loud() {
+        let full = SystemState {
+            at_capacity: true,
+            ..SystemState::default()
+        };
+        assert!(status_line(&full).contains("at capacity"), "{full:?}");
+        assert!(!status_line(&SystemState::default()).contains("at capacity"));
     }
 }

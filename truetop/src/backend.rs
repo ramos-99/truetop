@@ -46,6 +46,10 @@ pub struct SystemState {
     pub memory_used_bytes: u64,
     pub memory_total_bytes: u64,
     pub load_average: f64,
+    /// The counter map is full, so it is evicting to make room. Accounting stays
+    /// honest, but a process that has been idle a while may report 0% for one
+    /// tick after it runs again.
+    pub at_capacity: bool,
 }
 
 /// Owns the per-metric collectors; each [`Collector::tick`] reads the maps and
@@ -60,6 +64,7 @@ pub struct Collector {
     mem: MemReader,
     reaper: Reaper,
     online_cpus: usize,
+    capacity: usize,
     memory_total_bytes: u64,
     cpu_history: VecDeque<f64>,
     io_history: VecDeque<f64>,
@@ -72,6 +77,7 @@ impl Collector {
         comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
         exits: RingBuf<MapData>,
         cpus: CpuCounts,
+        capacity: u32,
     ) -> Self {
         Self {
             cpu_maps,
@@ -83,6 +89,7 @@ impl Collector {
             mem: MemReader::new(),
             reaper: Reaper::new(exits),
             online_cpus: cpus.online,
+            capacity: capacity as usize,
             memory_total_bytes: crate::system::memory_total_bytes(),
             // Filled with a flat baseline so the charts span their panel from the
             // first tick instead of drawing into a mostly empty axis.
@@ -100,6 +107,9 @@ impl Collector {
 
     pub fn tick(&mut self) -> SystemState {
         let cpu_snap = self.cpu_maps.read(&mut self.reader);
+        // Reads a handful high: the in-flight correction can add a running tgid
+        // the map has not seen. Noise against a five-figure capacity.
+        let tracked = cpu_snap.by_pid.len();
         let cpu = self.cpu.deltas(cpu_snap);
         let io_snap = self.reader.read_counter(&self.iowait_ns);
         let io = self.iowait.deltas(io_snap);
@@ -131,6 +141,7 @@ impl Collector {
             memory_used_bytes: crate::system::memory_used_bytes(self.memory_total_bytes),
             memory_total_bytes: self.memory_total_bytes,
             load_average: crate::system::load_average(),
+            at_capacity: tracked >= self.capacity,
         }
     }
 

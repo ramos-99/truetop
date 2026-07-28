@@ -229,7 +229,12 @@ fn setup_collector(ebpf: &mut aya::Ebpf, cpus: CpuCounts) -> anyhow::Result<Coll
             .context("CURRENT_TGID map not found")?,
     )?;
     let cpu_maps = CpuMaps::new(cpu_ns, start_time, current_tgid);
-    Ok(Collector::new(cpu_maps, iowait_ns, comm, exits, cpus))
+    // The kernel's number, not the one we asked for: it is what saturation is
+    // measured against.
+    let (_, capacity) = cpu_maps.kind_and_capacity()?;
+    Ok(Collector::new(
+        cpu_maps, iowait_ns, comm, exits, cpus, capacity,
+    ))
 }
 
 fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {
