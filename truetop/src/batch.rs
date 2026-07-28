@@ -61,6 +61,11 @@ pub struct BatchReader {
 }
 
 impl BatchReader {
+    /// Entries per `BPF_MAP_LOOKUP_BATCH` call. Public so the integration test
+    /// sizes a map from the real boundary rather than a literal that would
+    /// quietly stop straddling it.
+    pub const BATCH: usize = BATCH;
+
     /// `nr_cpus` must be the *possible* CPU count (`CpuCounts::possible`): the
     /// kernel writes one value slot per possible CPU per key.
     pub fn new(nr_cpus: usize) -> Self {
@@ -75,9 +80,13 @@ impl BatchReader {
     pub fn sum_per_cpu(&mut self, fd: RawFd) -> HashMap<u32, u64> {
         let mut totals = HashMap::new();
         let mut cursor = Cursor::default();
-        while let Some(count) = self.next_batch(fd, &mut cursor) {
+        loop {
+            let Some((count, exhausted)) = self.next_batch(fd, &mut cursor) else {
+                break;
+            };
             fold(&self.keys, &self.values, count, self.nr_cpus, &mut totals);
-            if count < BATCH {
+            // A zero-entry batch that is not the tail would spin.
+            if exhausted || count == 0 {
                 break;
             }
         }
@@ -92,8 +101,13 @@ impl BatchReader {
         Snapshot::new(self.sum_per_cpu(map.fd().as_fd().as_raw_fd()))
     }
 
-    /// One batch call; returns the entries written, or `None` once exhausted.
-    fn next_batch(&mut self, fd: RawFd, cursor: &mut Cursor) -> Option<usize> {
+    /// One batch call: the entries written, and whether the kernel reported the
+    /// map exhausted. `None` if the call failed, leaving the buffers meaningless.
+    ///
+    /// A short batch is *not* exhaustion. The kernel copies whole buckets and
+    /// stops when the next one will not fit the buffer, leaving the cursor on it;
+    /// only `ENOENT` ends the walk.
+    fn next_batch(&mut self, fd: RawFd, cursor: &mut Cursor) -> Option<(usize, bool)> {
         let mut attr = BatchAttr::new(fd, cursor, &mut self.keys, &mut self.values);
         // SAFETY: the key/value buffers are sized BATCH × nr_cpus, exactly what
         // the kernel writes for this per-CPU map; `attr` is a valid bpf_attr.
@@ -107,10 +121,13 @@ impl BatchReader {
         };
         cursor.started = true;
 
-        // Entries are valid on success and on the ENOENT tail; any other error
-        // leaves `count` meaningless, so report exhaustion.
-        let usable = ret == 0 || io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT);
-        (usable && attr.count > 0).then_some(attr.count as usize)
+        if ret == 0 {
+            return Some((attr.count as usize, false));
+        }
+        // The ENOENT tail still carries entries; any other error leaves `count`
+        // meaningless.
+        (io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT))
+            .then_some((attr.count as usize, true))
     }
 }
 
