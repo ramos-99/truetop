@@ -212,7 +212,15 @@ memory moves in-kernel with everything else.
 
 - Per-PID block device latency from `block_rq_issue` and `block_rq_complete`.
 - A `bpf_iter` task walk to replace the one-time `/proc` sweep that names
-  processes which already existed at startup.
+  processes which already existed at startup. That sweep is a stopgap: it is the
+  last O(N) procfs scan left in truetop, and the only reason startup cost tracks
+  the process count rather than being flat like everything else here. A task
+  iterator reads the same names and uids from `task_struct` in one kernel-side
+  pass. [aya](https://aya-rs.dev) already loads and attaches iterators from user
+  space; `aya-ebpf` has no iterator program type yet, so the kernel half would
+  have to be hand-rolled against a raw context. **Contributions adding iterator
+  support to aya would be very welcome**, and would reduce this to a small change
+  here.
 - Memory in-kernel, once an accurate per-process interface exists.
 - Kernels 5.10 through 5.13 in CI, which take the pre-5.14 `state` field path,
   and aarch64 at runtime.
