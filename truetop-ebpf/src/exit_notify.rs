@@ -17,8 +17,8 @@ use truetop_common::ExitEvent;
 
 /// Room for far more departures than a second of heavy churn produces. A full
 /// ring drops records, which delays a reap rather than losing accounting: the
-/// tick still reads the totals, the entries simply linger until later capacity
-/// reclaims them.
+/// tick still reads the totals, and an entry nobody reaps is one nothing charges
+/// either, so it goes cold and the LRU evicts it (see `cpu`).
 #[map]
 static EXITS: RingBuf = RingBuf::with_byte_size(256 * 1024, 0);
 

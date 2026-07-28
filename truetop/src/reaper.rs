@@ -26,23 +26,34 @@ impl Reaper {
         Self { exits }
     }
 
-    /// Delete every process announced since the last call from the accounting
-    /// maps and the name cache. Run after the tick has read this interval's
+    /// Departed processes cleared per tick. Three map operations each, so an
+    /// exit storm would otherwise queue tens of thousands of syscalls ahead of
+    /// the snapshot. Keeps up with the heaviest churn we benchmark, ~3,300
+    /// exits/s.
+    const BUDGET: usize = 4096;
+
+    /// Delete announced processes from the accounting maps and the name cache,
+    /// up to [`Self::BUDGET`]. Run after the tick has read this interval's
     /// totals, so a process that just ended is charged its final slice before
     /// its entry goes.
+    ///
+    /// Records past the budget wait in the ring for the next tick, and any the
+    /// ring drops leave a cold entry for eviction to reclaim (see `cpu`).
     pub(crate) fn reap(
         &mut self,
         cpu_ns: &mut MapData,
         iowait_ns: &mut MapData,
         names: &mut Resolver,
     ) {
-        while let Some(record) = self.exits.next() {
-            let Some(event) = ExitEvent::from_bytes(&record) else {
-                continue;
+        for _ in 0..Self::BUDGET {
+            let Some(record) = self.exits.next() else {
+                break;
             };
-            delete_elem(fd(cpu_ns), event.tgid);
-            delete_elem(fd(iowait_ns), event.tgid);
-            names.forget(event.tgid);
+            if let Some(event) = ExitEvent::from_bytes(&record) {
+                delete_elem(fd(cpu_ns), event.tgid);
+                delete_elem(fd(iowait_ns), event.tgid);
+                names.forget(event.tgid);
+            }
         }
     }
 }
