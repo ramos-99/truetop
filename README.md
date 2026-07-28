@@ -48,9 +48,11 @@ grow with the process count.
   one of your own processes high in it is a synchronous stall, which is the case
   the other monitors leave you to guess at.
 
-- **O(1) collection.** CPU and I/O wait accumulate on `sched_switch`, and one
-  `bpf_map_lookup_batch` per refresh drains the lot, whether the machine is
-  running 50 processes or 50,000.
+- **Batched collection.** CPU and I/O wait accumulate on `sched_switch`, and each
+  refresh drains the maps with `bpf_map_lookup_batch`, thousands of processes per
+  syscall instead of one syscall per process. The maps hold 65,536 processes by
+  default; past that they evict the coldest entry rather than refusing new ones,
+  and the status line says so.
 
 - **One binary across kernels.** `task_struct` offsets are resolved from the
   kernel's own BTF at load and injected as constants, without libbpf. CI runs
@@ -126,6 +128,11 @@ cargo xtask run                                               # build and run, e
 Columns are `Pid`, `User`, `Program`, `Cpu%`, `Mem` and `IO Wait`. The table
 holds the top 256 rows of the current sort, so drawing does not grow with the
 process count either.
+
+`--max-processes <N>` sizes the kernel accounting maps. The default is derived
+from the CPU count rather than fixed, because the maps are preallocated and a
+per-CPU one costs `N × 8 bytes × CPUs`: the full 65,536 up to 64 CPUs, tapering
+to 16,384 above that. Raise it if the status line reports `at capacity`.
 
 `truetop --bench <TICKS>` runs the collector headless for a fixed number of
 ticks, which is what the benchmarks drive. `--help` and `--version` answer

@@ -9,6 +9,22 @@
 
 Reference machine: AMD Ryzen 7 5800HS, 8 cores / 16 threads. Details and caveats below.
 
+> [!WARNING]
+> **Status, 2026-07-28.** Two findings invalidate part of this page.
+>
+> The batched read stopped at the first partially-filled batch instead of at
+> `ENOENT`, so above roughly 4,000 live processes the collector folded ~4,095
+> entries and silently dropped the rest. Every figure here taken above that count
+> measured a collector doing a fraction of the work it should have, which
+> flatters the CPU line in particular.
+>
+> Separately, the absolutes no longer reproduce: the same pre-LRU hotpath code
+> measures 479 ns on this machine today against the ~335 ns published below.
+> Kernel, mitigations and thermal envelope have all moved since.
+>
+> The A/B deltas below were measured back to back and stand. The absolutes are
+> pending a controlled re-run.
+
 | metric                              | truetop               | htop / btop           |
 | ----------------------------------- | --------------------- | --------------------- |
 | CPU at ~7,400 processes             | **1.7%** of a core, flat | 33% / 22%, climbing |
@@ -254,12 +270,55 @@ Four changes, same machine:
 Each step's A/B had non-overlapping IQRs. Numbers are machine-specific; re-run for
 yours.
 
+### What capacity costs
+
+The accounting maps were plain per-CPU hashes of a fixed 16,384 entries, and a
+full one returns `E2BIG`: the hotpath dropped the write, and that process read
+0.0% for the rest of its life. They are LRU now, so a full map evicts its coldest
+entry instead and accounting degrades rather than lying. `--max-processes` sets
+the size; its default is capped by a memory budget, because an LRU map is
+preallocated and a per-CPU one costs `entries x 8 x possible_cpus`.
+
+Measured back to back under `hackbench`, one session:
+
+| accounting map                     | per-event                |
+| ---------------------------------- | ------------------------ |
+| plain per-CPU hash, 16,384 entries | 479.0 ns [477.4, 481.3]  |
+| LRU, 65,536 entries                | 500.1 ns [497.9, 502.8]  |
+| LRU, 16,384 entries                | 522.0 ns [513.7, 525.8]  |
+
+**LRU costs 20-45 ns per event.** Both LRU runs sit above the plain hash with
+non-overlapping IQRs, so the direction is certain; the width is what one machine
+can resolve. The kernel sets a reference bit on every lookup a BPF program makes,
+which is what the hotpath pays. The per-tick read from user space does not,
+because the syscall lookup path deliberately does not mark entries, so a full map
+walk cannot disturb eviction order. Nothing was evicting during these runs -
+hackbench's few hundred tasks sit well inside either map - so this is
+steady-state overhead, not the cost of eviction.
+
+The third row was an attempt to separate the map type from the capacity increase
+and it failed: the smaller map measured *slower*, which a larger table cannot
+cause, and that run's IQR was three times wider with the storm overhead swinging
++6% against the previous run's -4%. So the capacity contribution is below this
+machine's noise floor, and no part of the 20-45 ns is attributed to it. Worth
+recording rather than re-running: the between-session noise here is wider than
+the effects being chased.
+
+We took the trade. A monitor may run out of capacity; it must not report zero and
+say nothing.
+
 One change we did not make: raising the minimum kernel would let the one global map
 on this path move to task-local storage, but perf prices that map's lookup at a
 fraction of a percent of storm cycles, ~5% of the per-event cost after the
 replacement's own overhead. Not worth dropping 5.10 support. A later version can
 detect the kernel at load and take the faster path where it exists, giving 5.15+
-users the win, once the VM matrix in CI can test both paths.
+users the win, once the VM matrix in CI can test both paths. Note the fit is
+specific to that map: `SLEEP_SINCE` holds per-thread state that dies with the
+thread, which is what task storage is for. The per-process counters are the
+opposite case - they have to outlive the task, since a process that lived and
+died between two ticks is still charged - so they cannot move there without an
+exit-time flush into a map, which is the thing being replaced. aya-ebpf also
+exposes no task-storage map type today.
 
 ## selfcpu: the tool's own cost
 
