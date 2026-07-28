@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use aya::maps::{MapData, PerCpuArray};
+use aya::maps::{MapData, MapType, PerCpuArray};
 
 use crate::{batch::BatchReader, metrics::Snapshot};
 
@@ -49,6 +49,12 @@ impl CpuMaps {
     /// once the tick has read its final total.
     pub(crate) fn map_mut(&mut self) -> &mut MapData {
         &mut self.cpu_ns
+    }
+
+    /// The kernel's own view of the counter map: its type and its capacity.
+    pub(crate) fn kind_and_capacity(&self) -> anyhow::Result<(MapType, u32)> {
+        let info = self.cpu_ns.info()?;
+        Ok((info.map_type()?, info.max_entries()))
     }
 
     fn add_inflight(&self, by_pid: &mut HashMap<u32, u64>) {

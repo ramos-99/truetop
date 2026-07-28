@@ -27,6 +27,11 @@ impl CpuCollector {
 
     /// Per-process CPU% for the interval, keyed by pid. First-sight pids read 0%
     /// (no baseline); multithreaded processes can exceed 100%.
+    ///
+    /// A process whose counter was evicted from the full LRU map and then ran
+    /// again is first-sight too, so it reads 0% for one interval before
+    /// reporting normally. That is the shape capacity pressure takes here: a
+    /// stale reading for a tick, not a process missing for its lifetime.
     pub(crate) fn deltas(&mut self, current: Snapshot) -> HashMap<u32, f64> {
         let elapsed_ns = current.elapsed_ns_since(&self.prev);
         let out = current

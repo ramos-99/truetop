@@ -19,7 +19,7 @@
 use aya_ebpf::{
     helpers::{TASK_COMM_LEN, bpf_get_current_comm},
     macros::{map, raw_tracepoint},
-    maps::HashMap,
+    maps::LruHashMap,
     programs::RawTracePointContext,
 };
 use truetop_common::COMM_LEN;
@@ -29,9 +29,11 @@ use crate::task::Task;
 // The shared wire width must match the kernel's; lock it at compile time.
 const _: () = assert!(COMM_LEN == TASK_COMM_LEN);
 
-// tgid → comm (NUL-padded).
+// tgid → comm (NUL-padded). LRU, so a name is never refused at capacity: the
+// worst case is that a process whose name has not been read lately falls back to
+// `<unknown>` until its next exec, rather than every new process doing so.
 #[map]
-static COMM_MAP: HashMap<u32, [u8; COMM_LEN]> = HashMap::with_max_entries(16384, 0);
+static COMM_MAP: LruHashMap<u32, [u8; COMM_LEN]> = LruHashMap::with_max_entries(16384, 0);
 
 #[raw_tracepoint(tracepoint = "sched_process_exec")]
 pub fn sched_process_exec(ctx: RawTracePointContext) -> i32 {

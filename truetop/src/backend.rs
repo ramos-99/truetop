@@ -91,6 +91,13 @@ impl Collector {
         }
     }
 
+    /// The counter map's type and capacity as the kernel reports them, so a
+    /// caller can check the map it got is the map it asked for.
+    #[doc(hidden)]
+    pub fn cpu_map_kind_and_capacity(&self) -> anyhow::Result<(aya::maps::MapType, u32)> {
+        self.cpu_maps.kind_and_capacity()
+    }
+
     pub fn tick(&mut self) -> SystemState {
         let cpu_snap = self.cpu_maps.read(&mut self.reader);
         let cpu = self.cpu.deltas(cpu_snap);

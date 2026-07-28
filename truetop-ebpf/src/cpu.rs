@@ -12,7 +12,7 @@
 
 use aya_ebpf::{
     macros::map,
-    maps::{PerCpuArray, PerCpuHashMap},
+    maps::{LruPerCpuHashMap, PerCpuArray},
 };
 
 // Schedule-in timestamp of the thread currently on this CPU. One running thread
@@ -20,9 +20,13 @@ use aya_ebpf::{
 // on this CPU), so there is no baseline to charge from.
 #[map]
 static START_TIME: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
-// tgid → accumulated on-CPU nanoseconds (the counter user space diffs).
+// tgid → accumulated on-CPU nanoseconds (the counter user space diffs). LRU: a
+// full map evicts its coldest entry rather than refusing the write, and the
+// coldest entry is what a departed process leaves behind, so eviction is also
+// how entries are reclaimed. The per-tick read does not disturb that order - the
+// kernel does not mark entries on the syscall lookup path.
 #[map]
-static CPU_NS: PerCpuHashMap<u32, u64> = PerCpuHashMap::with_max_entries(16384, 0);
+static CPU_NS: LruPerCpuHashMap<u32, u64> = LruPerCpuHashMap::with_max_entries(16384, 0);
 // tgid of the thread currently on this CPU (0 = idle), paired with START_TIME so
 // user space can bill a running thread's in-flight slice at read (`add_inflight`).
 #[map]

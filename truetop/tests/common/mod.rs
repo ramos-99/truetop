@@ -1,5 +1,9 @@
 //! Shared harness for the eBPF integration tests - they need root and a live
 //! kernel, so are `#[ignore]`d. Run with `cargo xtask test`.
+//!
+//! Each test binary compiles this module separately, so a helper another binary
+//! uses reads as dead here.
+#![allow(dead_code)]
 
 use std::process::{Child, Command};
 

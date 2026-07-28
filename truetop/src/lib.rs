@@ -85,7 +85,14 @@ fn raise_memlock() {
 /// [`aya::Ebpf`] owns the tracepoint links - keep it alive for the collector's
 /// lifetime.
 pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
-    attach_with(CpuCounts::detect()?, cli::DEFAULT_MAX_PROCESSES)
+    attach_with_capacity(cli::DEFAULT_MAX_PROCESSES)
+}
+
+/// [`attach`] with the accounting maps sized to `max_processes`, as
+/// `--max-processes` sizes them.
+#[doc(hidden)]
+pub fn attach_with_capacity(max_processes: u32) -> anyhow::Result<(aya::Ebpf, Collector)> {
+    attach_with(CpuCounts::detect()?, max_processes)
 }
 
 /// [`attach`] over an already-resolved topology, so one process reads it once.
@@ -198,13 +205,13 @@ fn setup_collector(ebpf: &mut aya::Ebpf, cpus: CpuCounts) -> anyhow::Result<Coll
 }
 
 fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps::MapData> {
-    let Map::PerCpuHashMap(map) = ebpf
+    match ebpf
         .take_map(name)
         .with_context(|| format!("{name} map not found"))?
-    else {
-        anyhow::bail!("{name} is not a per-CPU hash map");
-    };
-    Ok(map)
+    {
+        Map::PerCpuHashMap(map) | Map::PerCpuLruHashMap(map) => Ok(map),
+        _ => anyhow::bail!("{name} is not a per-CPU hash map"),
+    }
 }
 
 /// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a
