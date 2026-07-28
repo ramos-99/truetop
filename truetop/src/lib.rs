@@ -26,9 +26,9 @@ use std::sync::{
 use anyhow::Context as _;
 use arc_swap::ArcSwap;
 use aya::{
-    EbpfLoader,
+    Btf, EbpfLoader,
     maps::{HashMap, Map, PerCpuArray, RingBuf},
-    programs::RawTracePoint,
+    programs::{FEntry, RawTracePoint},
 };
 pub use backend::{Collector, SystemState};
 // Exposed for the batch integration test, not part of the stable API.
@@ -169,6 +169,7 @@ fn load_ebpf(max_processes: u32) -> anyhow::Result<aya::Ebpf> {
         btf::field_byte_offset("task_struct", "signal").context("BTF: task_struct::signal")?;
     let live =
         btf::field_byte_offset("signal_struct", "live").context("BTF: signal_struct::live")?;
+    let cred_uid = btf::field_byte_offset("cred", "uid").context("BTF: cred::uid")?;
     let state = state_offset()?;
     // A miss falls back to the probe-read path, correct on any kernel.
     let has_prev_state = btf::sched_switch_has_prev_state().unwrap_or(false);
@@ -183,6 +184,7 @@ fn load_ebpf(max_processes: u32) -> anyhow::Result<aya::Ebpf> {
         .override_global("STATE_OFFSET", &state, true)
         .override_global("SIGNAL_OFFSET", &signal, true)
         .override_global("LIVE_OFFSET", &live, true)
+        .override_global("CRED_UID_OFFSET", &cred_uid, true)
         .override_global("HAS_PREV_STATE", &u32::from(has_prev_state), true)
         // The process-keyed maps. Not SLEEP_SINCE, which is keyed by thread and
         // bounded by the threads asleep at one instant, not by process count.
@@ -219,6 +221,11 @@ fn setup_collector(ebpf: &mut aya::Ebpf, cpus: CpuCounts) -> anyhow::Result<Coll
         "sched_process_exit",
     ] {
         attach_raw_tracepoint(ebpf, tp)?;
+    }
+    // Accuracy, not function: without it a process that drops privileges after
+    // exec keeps the uid it was born with.
+    if let Err(err) = attach_creds(ebpf) {
+        log::warn!("credential changes will go unnoticed: {err:#}");
     }
 
     // Counter maps stay raw MapData so the collector can do
@@ -293,6 +300,20 @@ fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Re
     program
         .attach(name)
         .with_context(|| format!("attaching `{name}`"))?;
+    Ok(())
+}
+
+/// The one hook that is not a raw tracepoint, because the kernel exposes none
+/// for credential changes. `fentry` costs a trampoline on a path that fires
+/// about once per process lifetime (CLAUDE.md §2).
+fn attach_creds(ebpf: &mut aya::Ebpf) -> anyhow::Result<()> {
+    let btf = Btf::from_sys_fs().context("reading kernel BTF")?;
+    let program: &mut FEntry = ebpf
+        .program_mut("commit_creds")
+        .context("program `commit_creds` not found in object")?
+        .try_into()?;
+    program.load("commit_creds", &btf).context("loading")?;
+    program.attach().context("attaching")?;
     Ok(())
 }
 

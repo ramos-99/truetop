@@ -6,6 +6,7 @@
 //! - [`cpu`]       - on-CPU time accounting,
 //! - [`iowait`]    - uninterruptible (D-state) sleep accounting,
 //! - [`comm`]        - process identity, captured on the `exec` and `fork` tracepoints (cold path),
+//! - [`creds`]       - `commit_creds`: a process's uid after it changes,
 //! - [`lifecycle`]   - `sched_process_exit`: drop transient state, announce the exit,
 //! - [`exit_notify`] - the exit ring buffer user space reaps the accounting from.
 //!
@@ -18,6 +19,7 @@
 
 mod comm;
 mod cpu;
+mod creds;
 mod exit_notify;
 mod iowait;
 mod lifecycle;

@@ -21,8 +21,16 @@ constraints when generating or reviewing code.
 
 ## 2. eBPF Kernel-Space Pipeline
 
-**Hooking strategy**: exclusive use of `raw_tracepoint` to bypass argument
-allocation overhead.
+**Hooking strategy**: `raw_tracepoint` everywhere the kernel offers one, to
+bypass argument allocation overhead.
+
+**The one exception** is `commit_creds` (`creds`), attached with `fentry`. The
+kernel exposes no tracepoint for credential changes, and without it a process
+that drops privileges after `exec` - an nginx worker, an sshd session - reports
+the uid it was born with for the rest of its life. The rule exists to protect a
+path that fires hundreds of thousands of times a second; this one fires about
+once per process lifetime, so the trampoline is not a hotpath cost. Any further
+exception needs the same argument made explicitly.
 
 **Targets**:
 - `sched_switch` - CPU utilization and D-state I/O wait per PID (one program,
@@ -31,6 +39,7 @@ allocation overhead.
 - `sched_process_fork` - identity for children that never `exec` (they inherit
   the parent's `comm`), so fork-per-connection servers are named without `/proc`
 - `sched_process_exit` - PID lifecycle cleanup
+- `commit_creds` (fentry) - the uid after a process changes credentials
 - `block_rq_issue` / `block_rq_complete` - block I/O device latency (Phase 2b)
 
 Memory (RSS) is read from `/proc` in user space: since Linux 6.2 it lives in a

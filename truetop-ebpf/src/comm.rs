@@ -46,6 +46,17 @@ fn current() -> Option<Identity> {
     })
 }
 
+/// Point a process at a new uid after a credential change, recording its name
+/// too if this is the first we have heard of it (see `creds`).
+#[inline(always)]
+pub(crate) fn set_uid(tgid: u32, uid: u32) {
+    if let Some(identity) = COMM_MAP.get_ptr_mut(tgid) {
+        unsafe { (*identity).uid = uid };
+    } else if let Some(identity) = current() {
+        let _ = COMM_MAP.insert(tgid, Identity { uid, ..identity }, 0);
+    }
+}
+
 #[raw_tracepoint(tracepoint = "sched_process_exec")]
 pub fn sched_process_exec(ctx: RawTracePointContext) -> i32 {
     // args: (*p, old_pid, *bprm); `comm` already holds the new program name.
