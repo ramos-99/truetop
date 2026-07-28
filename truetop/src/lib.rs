@@ -41,7 +41,8 @@ use truetop_common::COMM_LEN;
 
 /// Load and attach the eBPF, then run either the headless bench loop or the UI.
 pub async fn run() -> anyhow::Result<()> {
-    let ticks = match cli::parse(std::env::args().skip(1))? {
+    let args = cli::parse(std::env::args().skip(1))?;
+    let ticks = match args.command {
         cli::Command::Print(text) => {
             println!("{text}");
             return Ok(());
@@ -55,7 +56,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let cpus = CpuCounts::detect()?;
     log::info!("CPUs - {} possible, {} online", cpus.possible, cpus.online);
-    let (ebpf, collector) = attach_with(cpus).map_err(diagnose)?;
+    let (ebpf, collector) = attach_with(cpus, args.max_processes).map_err(diagnose)?;
 
     match ticks {
         Some(ticks) => backend::run_headless(collector, ticks),
@@ -84,12 +85,12 @@ fn raise_memlock() {
 /// [`aya::Ebpf`] owns the tracepoint links - keep it alive for the collector's
 /// lifetime.
 pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
-    attach_with(CpuCounts::detect()?)
+    attach_with(CpuCounts::detect()?, cli::DEFAULT_MAX_PROCESSES)
 }
 
 /// [`attach`] over an already-resolved topology, so one process reads it once.
-fn attach_with(cpus: CpuCounts) -> anyhow::Result<(aya::Ebpf, Collector)> {
-    let mut ebpf = load_ebpf()?;
+fn attach_with(cpus: CpuCounts, max_processes: u32) -> anyhow::Result<(aya::Ebpf, Collector)> {
+    let mut ebpf = load_ebpf(max_processes)?;
     let collector = setup_collector(&mut ebpf, cpus)?;
     Ok((ebpf, collector))
 }
@@ -118,7 +119,7 @@ fn privilege_hint(err: &anyhow::Error) -> Option<&'static str> {
 
 /// Load the eBPF object, resolving task_struct field offsets from the live
 /// kernel BTF and injecting them as globals - our portable CO-RE (see `btf`).
-fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
+fn load_ebpf(max_processes: u32) -> anyhow::Result<aya::Ebpf> {
     let pid = btf::field_byte_offset("task_struct", "pid").context("BTF: task_struct::pid")?;
     let tgid = btf::field_byte_offset("task_struct", "tgid").context("BTF: task_struct::tgid")?;
     // The sched_switch hotpath reads pid and tgid in one 8-byte load
@@ -139,6 +140,11 @@ fn load_ebpf() -> anyhow::Result<aya::Ebpf> {
         .override_global("TGID_OFFSET", &tgid, true)
         .override_global("STATE_OFFSET", &state, true)
         .override_global("HAS_PREV_STATE", &u32::from(has_prev_state), true)
+        // The process-keyed maps. Not SLEEP_SINCE, which is keyed by thread and
+        // bounded by the threads asleep at one instant, not by process count.
+        .map_max_entries("CPU_NS", max_processes)
+        .map_max_entries("IOWAIT_NS", max_processes)
+        .map_max_entries("COMM_MAP", max_processes)
         .load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/truetop"
