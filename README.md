@@ -33,7 +33,7 @@ grow with the process count.
 
 ## Contents
 
-[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [Memory](#memory) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Security](#security) · [License](#license)
+[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [What reads /proc](#what-still-reads-proc) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Security](#security) · [License](#license)
 
 ## Features
 
@@ -140,14 +140,18 @@ without privileges.
 
 ## How it works
 
-Four raw tracepoints, and nothing reads `/proc` on the hot path:
+Four raw tracepoints and one `fentry` hook, none of which reads `/proc`:
 
 - `sched_switch` accumulates per-process on-CPU time, and I/O wait by stamping a
   timestamp when a task leaves the CPU in uninterruptible sleep and charging the
   interval when it comes back.
-- `sched_process_exec` and `sched_process_fork` capture process names. Recording
-  the fork is what names children that never call `execve`, such as PostgreSQL
-  backends and nginx workers.
+- `sched_process_exec` and `sched_process_fork` capture each process's name and
+  owning user. Recording the fork is what names children that never call
+  `execve`, such as PostgreSQL backends and nginx workers.
+- `commit_creds` follows the user when a process changes it, which is how a
+  worker that drops privileges after being forked is shown as the user it runs
+  as rather than the one it was started by. It is the one hook that is not a
+  tracepoint, because the kernel offers none for credential changes.
 - `sched_process_exit` announces the departure on a ring buffer. User space
   reads the process's final totals on its next refresh, so one that ran and ended
   between two refreshes is still charged its time, then deletes the entry.
@@ -197,7 +201,22 @@ processes costs more, not less. The figure also tracks the clocksource, since
 `bpf_ktime_get_ns` runs per event and roughly triples on `hpet`. Benchmark
 before deploying on latency-sensitive hosts.
 
-## Memory
+## What still reads `/proc`
+
+Everything about a process's *behaviour* comes from the kernel: CPU time, I/O
+wait, and the name and owning user of anything that starts while truetop runs.
+Three things do not, and they are worth naming rather than leaving to be
+discovered under `strace`:
+
+| what | when | why |
+| --- | --- | --- |
+| RSS, from `statm` | per visible row, per refresh | no eBPF interface gives an exact figure, see below |
+| names and uids of processes that predate truetop | once, at startup | a `bpf_iter` task walk would do it in-kernel, see [Roadmap](#roadmap) |
+| `meminfo`, `loadavg`, hostname, CPU model | one small file each, per refresh | machine-wide, so the cost is constant, not per process |
+
+Only the first is permanent. The second is the last O(N) procfs scan in the tool
+and is on its way out; the third is four files a second regardless of whether the
+machine runs fifty processes or fifty thousand.
 
 RSS comes from `/proc/<pid>/statm` in user space, read only for the rows on
 screen, so the cost stays bounded regardless of process count.
