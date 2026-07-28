@@ -85,21 +85,49 @@ fn raise_memlock() {
 /// [`aya::Ebpf`] owns the tracepoint links - keep it alive for the collector's
 /// lifetime.
 pub fn attach() -> anyhow::Result<(aya::Ebpf, Collector)> {
-    attach_with_capacity(cli::DEFAULT_MAX_PROCESSES)
+    attach_with(CpuCounts::detect()?, None)
 }
 
 /// [`attach`] with the accounting maps sized to `max_processes`, as
 /// `--max-processes` sizes them.
 #[doc(hidden)]
 pub fn attach_with_capacity(max_processes: u32) -> anyhow::Result<(aya::Ebpf, Collector)> {
-    attach_with(CpuCounts::detect()?, max_processes)
+    attach_with(CpuCounts::detect()?, Some(max_processes))
 }
 
 /// [`attach`] over an already-resolved topology, so one process reads it once.
-fn attach_with(cpus: CpuCounts, max_processes: u32) -> anyhow::Result<(aya::Ebpf, Collector)> {
-    let mut ebpf = load_ebpf(max_processes)?;
+fn attach_with(
+    cpus: CpuCounts,
+    max_processes: Option<u32>,
+) -> anyhow::Result<(aya::Ebpf, Collector)> {
+    let entries = max_processes.unwrap_or_else(|| default_max_processes(cpus.possible));
+    log::info!(
+        "accounting maps: {entries} entries, ~{} MiB of kernel memory",
+        map_bytes(entries, cpus.possible) >> 20
+    );
+
+    let mut ebpf = load_ebpf(entries)?;
     let collector = setup_collector(&mut ebpf, cpus)?;
     Ok((ebpf, collector))
+}
+
+/// Entries per accounting map when the operator has not chosen. Capped by a
+/// memory budget rather than flat, because an LRU map is preallocated and a
+/// per-CPU one costs `entries × 8 × possible_cpus`.
+fn default_max_processes(possible_cpus: usize) -> u32 {
+    const CEILING: u32 = 65_536;
+    const FLOOR: u32 = 16_384;
+    const BUDGET_PER_MAP: u64 = 32 << 20;
+
+    let per_entry = 8 * possible_cpus.max(1) as u64;
+    let affordable = u32::try_from(BUDGET_PER_MAP / per_entry).unwrap_or(u32::MAX);
+    affordable.clamp(FLOOR, CEILING)
+}
+
+/// What those maps commit at load: two per-CPU counters plus the name map.
+fn map_bytes(entries: u32, possible_cpus: usize) -> u64 {
+    let entries = u64::from(entries);
+    2 * entries * 8 * possible_cpus as u64 + entries * COMM_LEN as u64
 }
 
 const PRIVILEGE_HINT: &str = "truetop loads eBPF, which needs privilege: run it as root (sudo truetop), or \
@@ -282,7 +310,14 @@ async fn wait_for_shutdown_signal() {
 mod tests {
     use std::io::{Error, ErrorKind};
 
-    use super::{PRIVILEGE_HINT, privilege_hint};
+    use super::{PRIVILEGE_HINT, default_max_processes, privilege_hint};
+
+    #[test]
+    fn the_default_map_size_tracks_the_cpu_count() {
+        assert_eq!(default_max_processes(16), 65_536);
+        assert_eq!(default_max_processes(128), 32_768);
+        assert_eq!(default_max_processes(4096), 16_384);
+    }
 
     #[test]
     fn permission_denied_anywhere_in_the_chain_hints_privilege() {

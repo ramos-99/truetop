@@ -6,18 +6,17 @@ use anyhow::{Context as _, Result, bail};
 const USAGE: &str = "\
 usage: truetop [--max-processes <N>] [--bench <TICKS>] [-h|--help] [-V|--version]
 
-      --max-processes <N>  processes the accounting maps hold (default 16384)
+      --max-processes <N>  processes the accounting maps hold; the default is
+                           derived from the CPU count, since a per-CPU map costs
+                           8 bytes per entry per CPU and is allocated at load
       --bench <TICKS>      run TICKS collector ticks headless, without the UI
   -h, --help               print this help
   -V, --version            print the version";
 
-/// Entries each accounting map is created with. Preallocated, so this is kernel
-/// memory paid up front: about `N × 8 × possible_cpus` per per-CPU map.
-pub(crate) const DEFAULT_MAX_PROCESSES: u32 = 16_384;
-
 pub(crate) struct Args {
     pub(crate) command: Command,
-    pub(crate) max_processes: u32,
+    /// `None` leaves the size to the machine; see `default_max_processes`.
+    pub(crate) max_processes: Option<u32>,
 }
 
 pub(crate) enum Command {
@@ -30,7 +29,7 @@ pub(crate) enum Command {
 pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Args> {
     let mut parsed = Args {
         command: Command::Ui,
-        max_processes: DEFAULT_MAX_PROCESSES,
+        max_processes: None,
     };
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -51,11 +50,12 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Args> {
             }
             "--max-processes" => {
                 let value = args.next().context("--max-processes needs a count")?;
-                parsed.max_processes = value
-                    .parse()
-                    .ok()
-                    .filter(|&n| n > 0)
-                    .with_context(|| format!("--max-processes: `{value}` is not a count"))?;
+                parsed.max_processes =
+                    Some(
+                        value.parse().ok().filter(|&n| n > 0).with_context(|| {
+                            format!("--max-processes: `{value}` is not a count")
+                        })?,
+                    );
             }
             other => bail!("unknown argument `{other}`\n\n{USAGE}"),
         }
@@ -72,10 +72,10 @@ mod tests {
     }
 
     #[test]
-    fn no_arguments_render_the_ui() {
+    fn no_arguments_render_the_ui_and_leave_the_size_to_the_machine() {
         let args = parse_args(&[]).unwrap();
         assert!(matches!(args.command, Command::Ui));
-        assert_eq!(args.max_processes, DEFAULT_MAX_PROCESSES);
+        assert_eq!(args.max_processes, None);
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod tests {
     fn max_processes_applies_to_whichever_mode_runs() {
         let args = parse_args(&["--max-processes", "1024", "--bench", "5"]).unwrap();
         assert!(matches!(args.command, Command::Bench(5)));
-        assert_eq!(args.max_processes, 1024);
+        assert_eq!(args.max_processes, Some(1024));
     }
 
     #[test]
