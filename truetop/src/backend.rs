@@ -13,7 +13,7 @@ use std::{
 use arc_swap::ArcSwap;
 use aya::maps::{HashMap as BpfHashMap, MapData, RingBuf};
 use tokio::time::{MissedTickBehavior, interval};
-use truetop_common::COMM_LEN;
+use truetop_common::Identity;
 
 use crate::{
     batch::BatchReader,
@@ -87,7 +87,7 @@ impl Collector {
     pub(crate) fn new(
         cpu_maps: CpuMaps,
         iowait_ns: MapData,
-        comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
+        comm: BpfHashMap<MapData, u32, Identity>,
         exits: RingBuf<MapData>,
         cpus: CpuCounts,
         capacity: u32,

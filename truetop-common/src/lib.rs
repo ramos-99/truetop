@@ -6,6 +6,20 @@
 /// tgid→name map shared between the eBPF capture and the user-space reader.
 pub const COMM_LEN: usize = 16;
 
+/// What the kernel captures about a process: its program name and the uid that
+/// owns it. Both are written on the cold `exec` and `fork` paths, so neither
+/// costs user space a `/proc` read per tick.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Identity {
+    pub comm: [u8; COMM_LEN],
+    pub uid: u32,
+}
+
+// SAFETY: `#[repr(C)]`, no padding, no pointers - safe to read as bytes.
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for Identity {}
+
 /// A process that has ended, announced over the exit ring buffer.
 ///
 /// It carries identity only. The counters live in per-CPU maps, and an eBPF

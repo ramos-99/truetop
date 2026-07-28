@@ -37,7 +37,7 @@ pub use batch::BatchReader;
 use cpu_maps::CpuMaps;
 use system::{CpuCounts, Machine};
 use tokio::signal;
-use truetop_common::COMM_LEN;
+use truetop_common::{COMM_LEN, Identity};
 
 /// Load and attach the eBPF, then run either the headless bench loop or the UI.
 pub async fn run() -> anyhow::Result<()> {
@@ -225,7 +225,7 @@ fn setup_collector(ebpf: &mut aya::Ebpf, cpus: CpuCounts) -> anyhow::Result<Coll
     // BPF_MAP_LOOKUP_BATCH (aya exposes no batch API; see `batch`).
     let cpu_ns = take_percpu_map(ebpf, "CPU_NS")?;
     let iowait_ns = take_percpu_map(ebpf, "IOWAIT_NS")?;
-    let comm: HashMap<_, u32, [u8; COMM_LEN]> =
+    let comm: HashMap<_, u32, Identity> =
         HashMap::try_from(ebpf.take_map("COMM_MAP").context("COMM_MAP not found")?)?;
     let exits: RingBuf<_> =
         RingBuf::try_from(ebpf.take_map("EXITS").context("EXITS map not found")?)?;

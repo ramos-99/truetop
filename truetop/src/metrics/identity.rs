@@ -1,23 +1,28 @@
-//! Process identity: name and owning user. The kernel captures `comm` on `exec`
-//! into `COMM_MAP`; a one-time `/proc` snapshot seeds processes that predate
-//! truetop. The user is the real uid from `/proc/<pid>/status`, mapped through
-//! `/etc/passwd` (read once).
+//! Process identity: name and owning user, both captured in the kernel on `exec`
+//! and `fork` into `COMM_MAP`. A one-time `/proc` snapshot seeds processes that
+//! predate truetop; uids are mapped through `/etc/passwd`, read once.
 
 use std::collections::HashMap;
 
 use aya::maps::{HashMap as BpfHashMap, MapData};
-use truetop_common::COMM_LEN;
+use truetop_common::{COMM_LEN, Identity};
 
 const UNKNOWN: &str = "<unknown>";
 
+/// Identity of a process that predates truetop, read once from `/proc`.
+struct Seeded {
+    name: String,
+    uid: u32,
+}
+
 pub(crate) struct Resolver {
-    comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>,
-    seed: HashMap<u32, String>,
+    comm: BpfHashMap<MapData, u32, Identity>,
+    seed: HashMap<u32, Seeded>,
     users: HashMap<u32, String>,
 }
 
 impl Resolver {
-    pub(crate) fn new(comm: BpfHashMap<MapData, u32, [u8; COMM_LEN]>) -> Self {
+    pub(crate) fn new(comm: BpfHashMap<MapData, u32, Identity>) -> Self {
         Self {
             comm,
             seed: backfill_proc_names(),
@@ -27,12 +32,12 @@ impl Resolver {
 
     /// Live `COMM_MAP` wins; fall back to the startup `/proc` snapshot.
     pub(crate) fn resolve(&self, tgid: u32) -> String {
-        if let Ok(comm) = self.comm.get(&tgid, 0) {
-            return decode_comm(comm);
+        if let Ok(identity) = self.comm.get(&tgid, 0) {
+            return decode_comm(identity.comm);
         }
         self.seed
             .get(&tgid)
-            .cloned()
+            .map(|seeded| seeded.name.clone())
             .unwrap_or_else(|| UNKNOWN.to_owned())
     }
 
@@ -45,9 +50,12 @@ impl Resolver {
     }
 
     /// Owning user, or the numeric uid when it maps to no passwd entry. `None`
-    /// if the process exited before its uid could be read.
+    /// for a process we have neither captured nor seeded.
     pub(crate) fn user(&self, tgid: u32) -> Option<String> {
-        let uid = proc_uid(tgid)?;
+        let uid = match self.comm.get(&tgid, 0) {
+            Ok(identity) => identity.uid,
+            Err(_) => self.seed.get(&tgid)?.uid,
+        };
         Some(
             self.users
                 .get(&uid)
@@ -63,6 +71,7 @@ fn decode_comm(raw: [u8; COMM_LEN]) -> String {
 }
 
 /// Real uid from `/proc/<pid>/status` (the first of the four `Uid:` fields).
+/// Startup only: live processes carry their uid in `COMM_MAP`.
 fn proc_uid(pid: u32) -> Option<u32> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let line = status.lines().find(|l| l.starts_with("Uid:"))?;
@@ -83,9 +92,10 @@ fn load_passwd() -> HashMap<u32, String> {
         .collect()
 }
 
-/// Seed names for processes that predate truetop and never fired a capturable
-/// `exec`.
-fn backfill_proc_names() -> HashMap<u32, String> {
+/// Seed identity for processes that predate truetop and never fired a capturable
+/// `exec`. The `status` read is the expensive one, and it happens once per
+/// process here rather than once per row per tick.
+fn backfill_proc_names() -> HashMap<u32, Seeded> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return HashMap::new();
     };
@@ -93,8 +103,14 @@ fn backfill_proc_names() -> HashMap<u32, String> {
         .flatten()
         .filter_map(|e| {
             let pid = e.file_name().to_str()?.parse().ok()?;
-            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-            Some((pid, comm.trim().to_owned()))
+            let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+            Some((
+                pid,
+                Seeded {
+                    name: name.trim().to_owned(),
+                    uid: proc_uid(pid)?,
+                },
+            ))
         })
         .collect()
 }

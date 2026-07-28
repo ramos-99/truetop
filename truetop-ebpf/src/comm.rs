@@ -17,32 +17,43 @@
 //! the `exec` would hold a per-CPU copy.
 
 use aya_ebpf::{
-    helpers::{TASK_COMM_LEN, bpf_get_current_comm},
+    helpers::{TASK_COMM_LEN, bpf_get_current_comm, bpf_get_current_uid_gid},
     macros::{map, raw_tracepoint},
     maps::LruHashMap,
     programs::RawTracePointContext,
 };
-use truetop_common::COMM_LEN;
+use truetop_common::{COMM_LEN, Identity};
 
 use crate::task::Task;
 
 // The shared wire width must match the kernel's; lock it at compile time.
 const _: () = assert!(COMM_LEN == TASK_COMM_LEN);
 
-// tgid → comm (NUL-padded). LRU, so a name is never refused at capacity: the
-// worst case is that a process whose name has not been read lately falls back to
-// `<unknown>` until its next exec, rather than every new process doing so.
+// tgid → name and owning uid. LRU, so identity is never refused at capacity: the
+// worst case is that a process not read lately falls back to `<unknown>` until
+// its next exec, rather than every new process doing so.
 #[map]
-static COMM_MAP: LruHashMap<u32, [u8; COMM_LEN]> = LruHashMap::with_max_entries(16384, 0);
+static COMM_MAP: LruHashMap<u32, Identity> = LruHashMap::with_max_entries(16384, 0);
+
+/// The identity of the task running now: `comm` from the helper, uid from the
+/// low half of `bpf_get_current_uid_gid`.
+#[inline(always)]
+fn current() -> Option<Identity> {
+    let comm = bpf_get_current_comm().ok()?;
+    Some(Identity {
+        comm,
+        uid: bpf_get_current_uid_gid() as u32,
+    })
+}
 
 #[raw_tracepoint(tracepoint = "sched_process_exec")]
 pub fn sched_process_exec(ctx: RawTracePointContext) -> i32 {
     // args: (*p, old_pid, *bprm); `comm` already holds the new program name.
     let tgid = Task::arg(&ctx, 0).tgid();
     if tgid != 0
-        && let Ok(comm) = bpf_get_current_comm()
+        && let Some(identity) = current()
     {
-        let _ = COMM_MAP.insert(tgid, comm, 0);
+        let _ = COMM_MAP.insert(tgid, identity, 0);
     }
     0
 }
@@ -53,9 +64,9 @@ pub fn sched_process_fork(ctx: RawTracePointContext) -> i32 {
     // has already inherited.
     let tgid = Task::arg(&ctx, 1).tgid();
     if tgid != 0
-        && let Ok(comm) = bpf_get_current_comm()
+        && let Some(identity) = current()
     {
-        let _ = COMM_MAP.insert(tgid, comm, 0);
+        let _ = COMM_MAP.insert(tgid, identity, 0);
     }
     0
 }
