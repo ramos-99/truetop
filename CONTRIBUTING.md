@@ -96,10 +96,11 @@ before quoting a figure anywhere, and quote the machine and clocksource with it:
 
 ```sh
 cargo +nightly fmt --all
-cargo clippy --workspace --exclude truetop-ebpf --all-targets -- -D warnings
+cargo +nightly clippy --workspace --exclude truetop-ebpf --all-targets -- -D warnings
 ```
 
-Both run in CI and both must be clean. Otherwise match the surrounding code:
+Both run in CI and both must be clean. Nightly for clippy too: the lint job
+installs no other toolchain, so it lints with lints stable does not have. Otherwise match the surrounding code:
 modules open with a doc comment saying why they exist that way, and inline
 comments carry the reasoning rather than restating the line below. A comment
 that asserts a mechanism the code no longer has is worse than none, so delete it
