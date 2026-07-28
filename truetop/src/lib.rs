@@ -163,17 +163,26 @@ fn load_ebpf(max_processes: u32) -> anyhow::Result<aya::Ebpf> {
         tgid == pid + 4,
         "task_struct pid ({pid}) and tgid ({tgid}) are not adjacent in this kernel"
     );
+    // Live-thread count of the group, read on the exit path to tell a departed
+    // process from a leader that exited while its threads ran on.
+    let signal =
+        btf::field_byte_offset("task_struct", "signal").context("BTF: task_struct::signal")?;
+    let live =
+        btf::field_byte_offset("signal_struct", "live").context("BTF: signal_struct::live")?;
     let state = state_offset()?;
     // A miss falls back to the probe-read path, correct on any kernel.
     let has_prev_state = btf::sched_switch_has_prev_state().unwrap_or(false);
     log::info!(
-        "CO-RE offsets - pid: {pid}, tgid: {tgid}, state: {state}; prev_state arg: {has_prev_state}"
+        "CO-RE offsets - pid: {pid}, tgid: {tgid}, state: {state}, signal: {signal}, live: {live}; \
+         prev_state arg: {has_prev_state}"
     );
 
     EbpfLoader::new()
         .override_global("PID_OFFSET", &pid, true)
         .override_global("TGID_OFFSET", &tgid, true)
         .override_global("STATE_OFFSET", &state, true)
+        .override_global("SIGNAL_OFFSET", &signal, true)
+        .override_global("LIVE_OFFSET", &live, true)
         .override_global("HAS_PREV_STATE", &u32::from(has_prev_state), true)
         // The process-keyed maps. Not SLEEP_SINCE, which is keyed by thread and
         // bounded by the threads asleep at one instant, not by process count.

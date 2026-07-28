@@ -10,6 +10,10 @@ static PID_OFFSET: Global<u32> = Global::new(0);
 static TGID_OFFSET: Global<u32> = Global::new(0);
 #[unsafe(no_mangle)]
 static STATE_OFFSET: Global<u32> = Global::new(0);
+#[unsafe(no_mangle)]
+static SIGNAL_OFFSET: Global<u32> = Global::new(0);
+#[unsafe(no_mangle)]
+static LIVE_OFFSET: Global<u32> = Global::new(0);
 
 /// A scheduler `task_struct` pointer taken from a tracepoint argument.
 pub struct Task(*const u8);
@@ -59,6 +63,29 @@ impl Task {
     #[inline(always)]
     pub fn state(&self) -> u32 {
         self.read_u32(STATE_OFFSET.load())
+    }
+
+    /// Whether this exit ends the thread group. `signal->live` counts the group's
+    /// living threads and the kernel decrements it before firing the exit
+    /// tracepoint, so zero means the last one is leaving; a leader that called
+    /// `pthread_exit` reads non-zero, a zombie whose group runs on.
+    ///
+    /// `false` when unreadable: a lingering entry costs a stale row, reaping a
+    /// live process costs its name.
+    #[inline(always)]
+    pub fn group_is_dead(&self) -> bool {
+        if self.0.is_null() {
+            return false;
+        }
+        let field = unsafe { self.0.add(SIGNAL_OFFSET.load() as usize) } as *const *const u8;
+        let Ok(signal) = (unsafe { bpf_probe_read_kernel(field) }) else {
+            return false;
+        };
+        if signal.is_null() {
+            return false;
+        }
+        let live = unsafe { signal.add(LIVE_OFFSET.load() as usize) } as *const u32;
+        unsafe { bpf_probe_read_kernel(live) }.is_ok_and(|live| live == 0)
     }
 
     /// Probe-read a `pid_t`-sized field at `offset`; 0 on a null task or fault.

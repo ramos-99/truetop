@@ -23,8 +23,10 @@ pub fn sched_process_exit(ctx: RawTracePointContext) -> i32 {
     let tgid = task.tgid();
 
     iowait::forget_thread(tid);
-    // The process ends only when its leader does; a thread carries no counters.
-    if tid == tgid {
+    // Not `tid == tgid`: a leader that calls `pthread_exit` becomes a zombie
+    // while its threads run on, and announcing there strips a live process of
+    // its counters and its name.
+    if task.group_is_dead() {
         exit_notify::announce(tgid);
     }
     0
