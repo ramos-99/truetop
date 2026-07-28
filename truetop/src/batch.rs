@@ -80,10 +80,7 @@ impl BatchReader {
     pub fn sum_per_cpu(&mut self, fd: RawFd) -> HashMap<u32, u64> {
         let mut totals = HashMap::new();
         let mut cursor = Cursor::default();
-        loop {
-            let Some((count, exhausted)) = self.next_batch(fd, &mut cursor) else {
-                break;
-            };
+        while let Some((count, exhausted)) = self.next_batch(fd, &mut cursor) {
             fold(&self.keys, &self.values, count, self.nr_cpus, &mut totals);
             // A zero-entry batch that is not the tail would spin.
             if exhausted || count == 0 {
