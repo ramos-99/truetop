@@ -1,0 +1,23 @@
+# Grouped: one pull request per ecosystem per week, rather than one per crate.
+# What CI tests is the lockfile as a whole, so that is the unit worth reviewing.
+#
+# An aya bump is the one to read carefully: it moves loader and map behaviour,
+# so it needs `cargo xtask test` on a live kernel and, if the hotpath changed,
+# a re-measurement before any published figure is quoted (CLAUDE.md §6).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
