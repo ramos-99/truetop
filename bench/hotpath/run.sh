@@ -11,7 +11,13 @@ cd "$(dirname "$0")"
 source ../lib.sh
 
 TRUETOP=../../target/release/truetop
-TICKS=120
+# truetop's lifetime here is bounded by cleanup()'s kill on EXIT, not by tick
+# count. A finite guess (it was 120) races two hackbench_best() calls plus
+# sampling plus a perf record - unpredictable durations - against a fixed
+# clock, and loses the moment hackbench gets slower for any reason (a kernel
+# update changing mitigations did it once already). u32::MAX ticks is decades;
+# it removes the race rather than widening it.
+TICKS=4294967295
 GROUPS_N=$(nproc)          # not GROUPS: that is a special bash array (group ids)
 LOOPS=5000
 SAMPLES=24
@@ -104,10 +110,17 @@ overhead=$(awk "BEGIN { printf \"%+.0f\", ($with - $baseline) / $baseline * 100 
 
 printf '\n'
 {
-    printf 'per-event total (bpf_stats)    : %s ns  (median, n=%s, IQR [%s, %s], range [%s, %s])\n' \
+    # Wall-clock overhead first: it is what a reader can compare against their
+    # own machine. The ns figures below it are absolute, so they move with the
+    # clocksource and CPU frequency at the time of the run (both in env.txt) -
+    # they explain where the overhead comes from, they are not the portable
+    # number.
+    printf 'wall-clock overhead, hackbench storm : ~%s%% (%s s -> %s s)\n' \
+        "$overhead" "$baseline" "$with"
+    printf '\n'
+    printf 'per-event total (bpf_stats)     : %s ns  (median, n=%s, IQR [%s, %s], range [%s, %s])\n' \
         "$med" "$n" "$p25" "$p75" "$lo" "$hi"
-    printf '  program code (perf)          : %s ns  (%s%% of busy cycles, %s samples)\n' \
+    printf '  program code (perf)           : %s ns  (%s%% of busy cycles, %s samples)\n' \
         "$perf_ns" "$perf_share" "$perf_total"
-    printf '  helper calls (difference)    : %s ns  (ktime, probe reads, map ops)\n' "$helpers_ns"
-    printf 'coarse storm overhead (o.o.m.) : ~%s%% (%s s -> %s s)\n' "$overhead" "$baseline" "$with"
+    printf '  helper calls (difference)     : %s ns  (ktime, probe reads, map ops)\n' "$helpers_ns"
 } | tee "$RESULTS/hotpath.txt"

@@ -87,6 +87,14 @@ pub fn current_governor() -> Option<String> {
     read_trim(GOVERNOR0)
 }
 
+/// Whichever turbo knob this kernel exposes, and its current value - not
+/// whether `CpuPerf` asked to disable it, but what the kernel reports now.
+pub fn current_turbo() -> Option<(&'static str, String)> {
+    TURBO_KNOBS
+        .iter()
+        .find_map(|&(path, _)| read_trim(path).map(|value| (path, value)))
+}
+
 fn read_trim(path: &str) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()

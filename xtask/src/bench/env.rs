@@ -2,7 +2,7 @@
 
 use std::{path::Path, process::Command};
 
-use super::cpu_perf::current_governor;
+use super::cpu_perf::{current_governor, current_turbo};
 
 /// Write machine and run provenance next to the numbers. Best-effort: any field
 /// that can't be read is simply omitted.
@@ -29,8 +29,18 @@ pub fn write_env(results: &Path) {
             .unwrap_or_default(),
     );
     line("governor:", current_governor().unwrap_or_default());
-    // bpf_ktime_get_ns runs once per event, so hpet vs tsc swings it 3x.
+    line(
+        "turbo:",
+        current_turbo()
+            .map(|(path, value)| format!("{value} ({path})"))
+            .unwrap_or_default(),
+    );
+    // bpf_ktime_get_ns runs once per event, so hpet vs tsc swings the per-event
+    // figure roughly 3x. Both this and a mitigation change move the same number
+    // for reasons that have nothing to do with the code, so both are recorded
+    // rather than left for someone to rediscover by diffing two sessions.
     line("clock:", clocksource());
+    line("mitigations:", mitigations());
 
     if std::fs::write(results.join("env.txt"), out).is_err() {
         eprintln!("could not write env.txt");
@@ -42,6 +52,25 @@ fn clocksource() -> String {
     std::fs::read_to_string("/sys/devices/system/clocksource/clocksource0/current_clocksource")
         .map(|s| s.trim().to_owned())
         .unwrap_or_default()
+}
+
+/// One line per CPU vulnerability the kernel reports a mitigation stance on,
+/// e.g. `spectre_v2=Mitigation: Enhanced IBRS`. A distro update can flip these
+/// with no other visible change, and the hotpath figure moves when they do.
+fn mitigations() -> String {
+    let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu/vulnerabilities") else {
+        return String::new();
+    };
+    let mut lines: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let status = std::fs::read_to_string(entry.path()).ok()?;
+            Some(format!("{name}={}", status.trim()))
+        })
+        .collect();
+    lines.sort_unstable();
+    lines.join(", ")
 }
 
 /// First `model name` from `/proc/cpuinfo`, or empty if unavailable.

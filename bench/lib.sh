@@ -35,10 +35,16 @@ cpu_ticks() {
 }
 
 # run_cnt and run_time_ns for the sched_switch program; "0 0" if not loaded yet.
+#
+# `first(g) // default` matters here, not `first(g) | (.x // 0)`: when the
+# program isn't loaded, `g` matches nothing, so `first(g)` yields no output at
+# all rather than null. jq then exits 0 with an empty stdout - not an error - so
+# a bare `|| echo "0 0"` fallback never runs. `//` is the operator that treats
+# "no output" as reason to fall back, same as it does for null.
 prog_stats() {
     bpftool prog show --json 2>/dev/null \
-        | jq -r 'first(.[] | select(.name == "sched_switch"))
-                 | "\(.run_cnt // 0) \(.run_time_ns // 0)"' 2>/dev/null \
+        | jq -r '(first(.[] | select(.name == "sched_switch")) // {run_cnt: 0, run_time_ns: 0})
+                 | "\(.run_cnt) \(.run_time_ns)"' 2>/dev/null \
         || echo "0 0"
 }
 
