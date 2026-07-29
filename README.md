@@ -33,7 +33,18 @@ the context-switch rate rather than how many processes are running.
 
 ## Contents
 
-[Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [What reads /proc](#what-still-reads-proc) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Security](#security) · [License](#license)
+[Why](#why) · [Features](#features) · [Requirements](#requirements) · [Install](#install) · [Usage](#usage) · [How it works](#how-it-works) · [Benchmarks](#benchmarks) · [Overhead](#overhead) · [What reads /proc](#what-still-reads-proc) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Security](#security) · [License](#license)
+
+## Why
+
+The premise: build a `top`-class monitor almost entirely in eBPF instead of
+procfs, and use that to expose numbers procfs cannot reach at all, not only to
+collect the same numbers cheaper. Per-process I/O wait is the first case: `top`,
+`htop` and `btop` all read process state from `/proc`, which carries no
+per-process uninterruptible-sleep counter to read. eBPF sees the scheduler
+directly, so it can show it. Anything else that lives at the scheduler or block
+layer and never made it into procfs is a candidate for the same treatment; block
+device latency per process is next, see [Roadmap](#roadmap).
 
 ## Features
 
@@ -174,20 +185,16 @@ in user space.
 
 ## Benchmarks
 
-> [!NOTE]
-> Being re-measured. The batched read was truncating above roughly 4,000
-> processes until July 2026, so the rows below that mention larger counts
-> measured a collector doing less work than it should have. The method holds; the
-> numbers move. [Details](bench/BENCHMARKS.md).
-
-Reproduce these with `cargo xtask bench`.
+Reproduce these with `cargo xtask bench`. Re-measured 2026-07-29; see
+[bench/BENCHMARKS.md](bench/BENCHMARKS.md) for what moved since these were
+first published and why.
 
 | metric | truetop | htop / btop |
 | --- | --- | --- |
-| CPU at ~7,400 processes | 1.7% of a core, flat | 33% / 22%, climbing |
-| CPU under 3,300 forks/s churn | 1.7% of a core | 4.3% (htop) |
-| data syscalls per refresh at ~5,000 | ~780 | ~12,000 (htop) |
-| per-process collection work | ~30 ns | ~12 µs (procfs) |
+| CPU at ~7,050 processes | 1.3% of a core, flat | 33.6% / 23.6%, climbing |
+| CPU under ~3,260 forks/s churn | 1.3% of a core | 2.7% (htop) |
+| data syscalls per refresh at ~5,350 | ~3,970 | ~12,900 (htop) |
+| per-process collection work | ~26 ns | ~12.3 µs (procfs) |
 
 Method, full results and the kernel-side cost are in
 [bench/BENCHMARKS.md](bench/BENCHMARKS.md).
@@ -196,17 +203,23 @@ Method, full results and the kernel-side cost are in
 
 `sched_switch` fires on every context switch, so truetop's cost scales with the
 context-switch rate rather than the process count. The per-event program is O(1)
-and measured at a median of ~335 ns on the reference machine, a figure currently
-under re-measurement, since recent runs on that same machine read higher. It is
-small but not free: under a `hackbench` context-switch storm it costs single-digit percent
-of wall clock, while an ordinary system does orders of magnitude fewer switches
-and pays well under 1%.
+and measured at a median of ~502 ns on the reference machine (turbo off, `tsc`
+clocksource - both move this figure, see
+[bench/BENCHMARKS.md](bench/BENCHMARKS.md)). Under a `hackbench`
+context-switch storm that cost ~+2% wall clock; an ordinary system does orders of
+magnitude fewer switches and pays well under 1%.
 
-Concretely, truetop is cheaper than htop only while switches per second stay
-below roughly 80,000 + 130 × processes. A switch-heavy machine with few
-processes costs more, not less. The figure also tracks the clocksource, since
-`bpf_ktime_get_ns` runs per event and roughly triples on `hpet`. Benchmark
-before deploying on latency-sensitive hosts.
+Roughly 20-45 ns of that is the accounting maps being LRU rather than a fixed
+hash, so a full map evicts its coldest entry instead of silently refusing new
+processes - see [Features](#features).
+
+truetop is cheaper than htop only below some switch rate that rises with process
+count; a switch-heavy machine with few processes costs more, not less. The exact
+crossover has not been re-measured against today's per-event cost - see
+[bench/BENCHMARKS.md](bench/BENCHMARKS.md#switch-cost-under-a-context-switch-storm).
+The figure also tracks the clocksource, since `bpf_ktime_get_ns` runs per event
+and roughly triples on `hpet`. Benchmark before deploying on latency-sensitive
+hosts.
 
 ## What still reads `/proc`
 
