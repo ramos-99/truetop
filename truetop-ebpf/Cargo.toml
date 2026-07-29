@@ -6,11 +6,11 @@ rust-version.workspace = true
 repository.workspace = true
 
 # Kernel-side code, matching the licence the object declares to the verifier.
-license = "GPL-2.0 OR MIT"
+license = "GPL-2.0-only OR MIT"
 description = "eBPF programs for truetop"
 
 [dependencies]
-truetop-common = { path = "../truetop-common" }
+truetop-common = { path = "../truetop-common", version = "0.1.0" }
 
 aya-ebpf = { workspace = true }
 

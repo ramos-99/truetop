@@ -11,7 +11,7 @@
 _The I/O-wait column `top`, `htop` and `btop` don't have._
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/ci.yml?style=for-the-badge&logo=github&label=CI)](https://github.com/ramos-99/truetop/actions/workflows/ci.yml)
-[![Linux](https://img.shields.io/badge/Linux-%E2%89%A5%205.15-F76800?style=for-the-badge&logo=linux&logoColor=white)](#requirements)
+[![kernel matrix](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/vm-matrix.yml?style=for-the-badge&logo=linux&logoColor=white&label=kernels%205.15%E2%80%936.18)](https://github.com/ramos-99/truetop/actions/workflows/vm-matrix.yml)
 [![eBPF CO-RE](https://img.shields.io/badge/eBPF-CO--RE-F76800?style=for-the-badge&logoColor=white)](#how-it-works)
 [![Rust](https://img.shields.io/badge/Rust-2024-DEA584?style=for-the-badge&logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/MIT%20or%20Apache--2.0-2EA043?style=for-the-badge)](#license)
