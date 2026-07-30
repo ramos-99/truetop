@@ -25,9 +25,10 @@ impl Paint {
     }
 
     fn wrap(&self, text: &str, code: &str) -> String {
-        match self.0 {
-            true => format!("\x1b[{code}m{text}\x1b[0m"),
-            false => text.to_owned(),
+        if self.0 {
+            format!("\x1b[{code}m{text}\x1b[0m")
+        } else {
+            text.to_owned()
         }
     }
 }

@@ -1,13 +1,13 @@
 //! truetop kernel-space programs - one BPF object, split by concern so new
 //! hooks slot in without ever touching the hotpath:
 //!
-//! - [`task`]      - shared CO-RE task introspection (injected field offsets),
-//! - [`sched`]     - the `sched_switch` hotpath, fanned out to each metric,
-//! - [`cpu`]       - on-CPU time accounting,
-//! - [`iowait`]    - uninterruptible (D-state) sleep accounting,
-//! - [`comm`]        - process identity, captured on the `exec` and `fork` tracepoints (cold path),
+//! - [`task`]        - shared CO-RE task introspection (injected field offsets),
+//! - [`sched`]       - the `sched_switch` hotpath, fanned out to each metric,
+//! - [`cpu`]         - on-CPU time accounting,
+//! - [`iowait`]      - uninterruptible (D-state) sleep accounting,
+//! - [`comm`]        - process identity, from `exec` and `fork` (cold path),
 //! - [`creds`]       - `commit_creds`: a process's uid after it changes,
-//! - [`lifecycle`]   - `sched_process_exit`: drop transient state, announce the exit,
+//! - [`lifecycle`]   - `sched_process_exit`: drop scratch state, announce the exit,
 //! - [`exit_notify`] - the exit ring buffer user space reaps the accounting from.
 //!
 //! Memory is deliberately *not* here - see `truetop`'s collector and the README:

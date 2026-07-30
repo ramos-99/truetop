@@ -1,6 +1,6 @@
 //! Machine and run provenance, written next to the numbers.
 
-use std::{path::Path, process::Command};
+use std::{fmt::Write as _, path::Path, process::Command};
 
 use super::cpu_perf::{current_governor, current_turbo};
 
@@ -11,7 +11,7 @@ pub fn write_env(results: &Path) {
     let mut line = |label: &str, value: String| {
         let value = value.trim();
         if !value.is_empty() {
-            out.push_str(&format!("{label:<10} {value}\n"));
+            let _ = writeln!(out, "{label:<10} {value}");
         }
     };
 

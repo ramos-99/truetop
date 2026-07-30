@@ -90,24 +90,17 @@ pub(super) fn draw_summary(frame: &mut Frame, state: &SystemState, area: Rect) {
         state.memory_used_bytes as f64 / state.memory_total_bytes as f64 * 100.0
     };
     gauge(&mut spans, "mem", memory_percent, Color::Cyan);
-    spans.push(Span::styled(
-        format!(
+
+    let dim = |text: String| Span::styled(text, Style::new().fg(theme::DIM));
+    spans.extend([
+        dim(format!(
             " {} of {}",
             format_bytes(state.memory_used_bytes),
             format_bytes(state.memory_total_bytes)
-        ),
-        Style::new().fg(theme::DIM),
-    ));
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        format!("load {:.2}", state.load_average),
-        Style::new().fg(theme::DIM),
-    ));
-    spans.push(Span::raw("  "));
-    spans.push(Span::styled(
-        format!("{} tasks", state.tracked),
-        Style::new().fg(theme::DIM),
-    ));
+        )),
+        dim(format!("  load {:.2}", state.load_average)),
+        dim(format!("  {} tasks", state.tracked)),
+    ]);
     frame.render_widget(Line::from(spans), area);
 }
 

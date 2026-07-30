@@ -37,8 +37,7 @@ impl Resolver {
         }
         self.seed
             .get(&tgid)
-            .map(|seeded| seeded.name.clone())
-            .unwrap_or_else(|| UNKNOWN.to_owned())
+            .map_or_else(|| UNKNOWN.to_owned(), |seeded| seeded.name.clone())
     }
 
     /// Drop a departed process's name once user space has finished with it, so

@@ -16,7 +16,7 @@
 //! - [`metrics`]   - one module per metric (`cpu`, `iowait`, `mem`, `identity`),
 //! - [`reaper`]    - deletes a departed process's map entries, budgeted per tick,
 //! - [`system`]    - host facts (`Machine`) and the CPU topology (`CpuCounts`),
-//! - [`ui`]        - the renderer: sorts, formats, draws: never collects, never blocks.
+//! - [`ui`]        - the renderer: sorts, formats and draws; never collects, never blocks.
 
 mod backend;
 mod batch;
@@ -332,12 +332,9 @@ async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal as unix_signal};
-        let mut term = match unix_signal(SignalKind::terminate()) {
-            Ok(s) => s,
-            Err(_) => {
-                let _ = signal::ctrl_c().await;
-                return;
-            }
+        let Ok(mut term) = unix_signal(SignalKind::terminate()) else {
+            let _ = signal::ctrl_c().await;
+            return;
         };
         tokio::select! {
             _ = signal::ctrl_c() => {}
