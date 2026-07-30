@@ -10,6 +10,8 @@
 
 _The I/O-wait column `top`, `htop` and `btop` don't have._
 
+**Pre-release.** Builds from source, no packaged binaries yet - see [Install](#install).
+
 [![CI](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/ci.yml?style=for-the-badge&logo=github&label=CI)](https://github.com/ramos-99/truetop/actions/workflows/ci.yml)
 [![kernel matrix](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/vm-matrix.yml?style=for-the-badge&logo=linux&logoColor=white&label=kernels%205.15%E2%80%936.18)](https://github.com/ramos-99/truetop/actions/workflows/vm-matrix.yml)
 [![eBPF CO-RE](https://img.shields.io/badge/eBPF-CO--RE-F76800?style=for-the-badge&logoColor=white)](#how-it-works)
