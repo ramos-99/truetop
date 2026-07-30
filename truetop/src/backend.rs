@@ -1,8 +1,8 @@
-//! Collector (backend) - producer side of the double-buffer (CLAUDE.md §3). Each
-//! [`Collector::tick`] diffs the CPU and I/O-wait counters into per-pid maps,
-//! enriches the union of the top rows of each with name/user/RSS, and publishes
-//! an immutable snapshot of raw values. Sorting and formatting are the
-//! renderer's job.
+//! Collector (backend) - producer side of the snapshot-per-tick double-buffer.
+//! Each [`Collector::tick`] diffs the CPU and I/O-wait counters into per-pid
+//! maps, enriches the union of the top rows of each with name/user/RSS, and
+//! publishes an immutable snapshot of raw values. Sorting and formatting are
+//! the renderer's job.
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},

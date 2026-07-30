@@ -1,4 +1,5 @@
-//! Renderer (frontend) - the consume side of the double-buffer (CLAUDE.md §3).
+//! Renderer (frontend) - the consumer side of the snapshot-per-tick
+//! double-buffer.
 //!
 //! Fully isolated from the backend: it only `load()`s the current immutable
 //! snapshot of raw values, sorts and formats it, and feeds ratatui. It does no

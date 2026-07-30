@@ -5,7 +5,7 @@
 //!
 //! Not a `raw_tracepoint` like the rest: the kernel exposes no tracepoint for
 //! this. `fentry` costs a trampoline on a path that fires about once per process
-//! lifetime, not per event (CLAUDE.md §2).
+//! lifetime, not per event.
 
 use aya_ebpf::{
     Global,

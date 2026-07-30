@@ -22,7 +22,7 @@ pub(crate) use mem::MemReader;
 
 /// One process as the renderer sees it: identity plus one slot per subsystem.
 /// Raw values only - the renderer formats them lazily for the visible rows
-/// (CLAUDE.md §3).
+/// it draws.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ProcessMetrics {
     pub pid: u32,

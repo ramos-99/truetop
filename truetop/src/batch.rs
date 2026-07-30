@@ -53,7 +53,7 @@ struct ElemAttr {
     flags: u64,
 }
 
-/// Reusable scratch so a tick never allocates (CLAUDE.md §3).
+/// Reusable scratch, so draining the maps costs no allocation per tick.
 pub struct BatchReader {
     nr_cpus: usize,
     keys: Box<[u32]>,

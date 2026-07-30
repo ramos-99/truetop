@@ -315,7 +315,7 @@ fn attach_raw_tracepoint(ebpf: &mut aya::Ebpf, name: &'static str) -> anyhow::Re
 
 /// The one hook that is not a raw tracepoint, because the kernel exposes none
 /// for credential changes. `fentry` costs a trampoline on a path that fires
-/// about once per process lifetime (CLAUDE.md §2).
+/// about once per process lifetime.
 fn attach_creds(ebpf: &mut aya::Ebpf) -> anyhow::Result<()> {
     let btf = Btf::from_sys_fs().context("reading kernel BTF")?;
     let program: &mut FEntry = ebpf

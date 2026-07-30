@@ -6,7 +6,7 @@
 //!
 //! `SLEEP_SINCE` is global, not per-CPU: a D interval spans CPUs, so per-CPU
 //! storage cannot pair its edges. Lookups are lock-free RCU; locked updates
-//! happen only on D transitions (CLAUDE.md §2).
+//! happen only on D transitions.
 
 use aya_ebpf::{
     macros::map,

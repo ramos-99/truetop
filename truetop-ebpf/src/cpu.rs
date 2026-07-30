@@ -1,6 +1,6 @@
-//! CPU utilisation (CLAUDE.md §2). Per-CPU, add-only counters driven from the
-//! shared `sched_switch` hook (`sched`); user space derives percentages from
-//! cross-tick deltas.
+//! CPU utilisation. Per-CPU, add-only counters driven from the shared
+//! `sched_switch` hook (`sched`); user space derives percentages from cross-tick
+//! deltas.
 //!
 //! Time is charged per thread but accumulated per process. A CPU runs exactly
 //! one thread at a time and a thread cannot migrate while on-CPU, so the

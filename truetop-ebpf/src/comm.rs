@@ -1,7 +1,7 @@
 //! Process identity capture. `comm` is written only on the cold `exec` and
-//! `fork` paths, never on `sched_switch`, so the hotpath stays string-free
-//! (CLAUDE.md §2/§6). The name outlives the process: user space reads it to
-//! label a departed process before reaping the entry (see `exit_notify`).
+//! `fork` paths, never on `sched_switch`, so the hotpath stays string-free. The
+//! name outlives the process: user space reads it to label a departed process
+//! before reaping the entry (see `exit_notify`).
 //!
 //! `exec` alone would miss every process that forks and never calls `execve` -
 //! how PostgreSQL backends, nginx workers and Redis children are spawned -
@@ -11,7 +11,7 @@
 //! `exec` overwrites it with the real one. Forks are orders of magnitude rarer
 //! than context switches, so both writes stay off the hot path.
 //!
-//! This map is intentionally a global `HashMap`, not per-CPU: the §2 per-CPU
+//! This map is intentionally a global `HashMap`, not per-CPU: the per-CPU
 //! rule targets hotpath spinlock contention, which a cold-path write does not
 //! incur, and a per-process name is not per-CPU data - only the core that ran
 //! the `exec` would hold a per-CPU copy.
