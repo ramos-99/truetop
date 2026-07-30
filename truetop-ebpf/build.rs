@@ -1,17 +1,16 @@
+//! Rebuild this crate when `bpf-linker` changes. The object cannot link without
+//! it, but it is a binary, not a crate, so cargo has no way to depend on it -
+//! artifact dependencies would say this properly, and rust-lang/cargo#12385
+//! keeps them impractical. The resolved path's mtime stands in as the cache key.
+//!
+//! Imperfect by construction: a different `bpf-linker` appearing earlier in
+//! `$PATH` goes unnoticed. Catching that means invalidating on `$PATH` and on
+//! every directory in it, which costs more rebuilds than the case is worth.
+
 use which::which;
 
-/// Building this crate has an undeclared dependency on the `bpf-linker` binary. This would be
-/// better expressed by [artifact-dependencies][bindeps] but issues such as
-/// https://github.com/rust-lang/cargo/issues/12385 make their use impractical for the time being.
-///
-/// This file implements an imperfect solution: it causes cargo to rebuild the crate whenever the
-/// mtime of `which bpf-linker` changes. Note that possibility that a new bpf-linker is added to
-/// $PATH ahead of the one used as the cache key still exists. Solving this in the general case
-/// would require rebuild-if-changed-env=PATH *and* rebuild-if-changed={every-directory-in-PATH}
-/// which would likely mean far too much cache invalidation.
-///
-/// [bindeps]: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html?highlight=feature#artifact-dependencies
 fn main() {
-    let bpf_linker = which("bpf-linker").unwrap();
-    println!("cargo:rerun-if-changed={}", bpf_linker.to_str().unwrap());
+    let bpf_linker =
+        which("bpf-linker").expect("bpf-linker not on $PATH; `cargo install bpf-linker`");
+    println!("cargo:rerun-if-changed={}", bpf_linker.display());
 }

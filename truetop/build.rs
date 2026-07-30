@@ -1,27 +1,32 @@
-use anyhow::{Context as _, anyhow};
-use aya_build::Toolchain;
+//! Compiles `truetop-ebpf` to a BPF object for `include_bytes_aligned!` to pull
+//! into the loader. Cargo cannot express this as an ordinary dependency - the
+//! eBPF crate builds for its own target with `-Z build-std` - so this runs a
+//! nested cargo instead (see the note in Cargo.toml).
 
-fn main() -> anyhow::Result<()> {
-    let cargo_metadata::Metadata { packages, .. } = cargo_metadata::MetadataCommand::new()
+use anyhow::{Context as _, Result, anyhow};
+use aya_build::{Package, Toolchain};
+
+fn main() -> Result<()> {
+    let metadata = cargo_metadata::MetadataCommand::new()
         .no_deps()
         .exec()
-        .context("MetadataCommand::exec")?;
-    let ebpf_package = packages
-        .into_iter()
-        .find(|cargo_metadata::Package { name, .. }| name.as_str() == "truetop-ebpf")
-        .ok_or_else(|| anyhow!("truetop-ebpf package not found"))?;
-    let cargo_metadata::Package {
-        name,
-        manifest_path,
-        ..
-    } = ebpf_package;
-    let ebpf_package = aya_build::Package {
-        name: name.as_str(),
-        root_dir: manifest_path
-            .parent()
-            .ok_or_else(|| anyhow!("no parent for {manifest_path}"))?
-            .as_str(),
-        ..Default::default()
-    };
-    aya_build::build_ebpf([ebpf_package], Toolchain::default())
+        .context("reading cargo metadata")?;
+    let ebpf = metadata
+        .packages
+        .iter()
+        .find(|package| package.name.as_str() == "truetop-ebpf")
+        .context("truetop-ebpf is not a member of this workspace")?;
+    let root_dir = ebpf
+        .manifest_path
+        .parent()
+        .ok_or_else(|| anyhow!("no parent directory for {}", ebpf.manifest_path))?;
+
+    aya_build::build_ebpf(
+        [Package {
+            name: ebpf.name.as_str(),
+            root_dir: root_dir.as_str(),
+            ..Default::default()
+        }],
+        Toolchain::default(),
+    )
 }
