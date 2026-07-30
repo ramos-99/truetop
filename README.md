@@ -195,6 +195,11 @@ first published and why.
 | CPU under ~3,260 forks/s churn | 1.3% of a core | 2.7% (htop) |
 | data syscalls per refresh at ~5,350 | ~3,970 | ~12,900 (htop) |
 | per-process collection work | ~26 ns | ~12.3 µs (procfs) |
+| RSS, this process, at ~7,050 processes | ~33 MiB, flat | ~19 / ~17 MiB, climbing |
+
+RSS is the one line where truetop starts behind: htop and btop start smaller and
+grow with process count, crossing truetop's flat floor somewhere past the range
+tested here. Detail in [bench/BENCHMARKS.md](bench/BENCHMARKS.md#selfcpu-the-tools-own-cost).
 
 Method, full results and the kernel-side cost are in
 [bench/BENCHMARKS.md](bench/BENCHMARKS.md).
