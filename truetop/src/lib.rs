@@ -7,6 +7,16 @@
 //!
 //! The binary is a thin shell over [`run`]; integration tests drive
 //! [`load_ebpf`]/[`setup_collector`] and [`Collector`] directly.
+//!
+//! - [`backend`]   - the collector: ticks the maps into a [`SystemState`] snapshot,
+//! - [`batch`]     - the raw `BPF_MAP_LOOKUP_BATCH` / delete syscalls aya has no typed API for,
+//! - [`btf`]       - resolves a kernel struct field's byte offset from live BTF,
+//! - [`cli`]       - argument parsing, before anything privileged happens,
+//! - [`cpu_maps`]  - the CPU-side kernel maps: reads, in-flight correction, deletion,
+//! - [`metrics`]   - one module per metric (`cpu`, `iowait`, `mem`, `identity`),
+//! - [`reaper`]    - deletes a departed process's map entries, budgeted per tick,
+//! - [`system`]    - host facts (`Machine`) and the CPU topology (`CpuCounts`),
+//! - [`ui`]        - the renderer: sorts, formats, draws: never collects, never blocks.
 
 mod backend;
 mod batch;
