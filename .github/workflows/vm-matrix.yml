@@ -26,6 +26,7 @@ env:
   CARGO_TERM_COLOR: always
   # Pin vmtest so a new CLI release can't silently change how the VM boots.
   VMTEST_VERSION: "0.18.0"
+  BPF_LINKER_VERSION: "0.10.4"
 
 permissions: {}
 
@@ -54,7 +55,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --locked
+      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
 
       # vmtest runs qemu on the host and talks to the guest over qemu-ga, which
       # the guest runs from this same host filesystem - so both packages must be

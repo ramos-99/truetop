@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pin the linker that builds the BPF object; 0.11.0 needs a system llvm-config.
+  BPF_LINKER_VERSION: "0.10.4"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +28,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --locked
+      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
 
       - run: cargo +nightly fmt --all -- --check
 
@@ -64,7 +66,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --locked
+      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
 
       - run: cargo test --workspace --exclude truetop-ebpf
 
@@ -84,7 +86,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --locked
+      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
 
       # ubuntu-latest is a real kernel with BTF and passwordless sudo, so the
       # eBPF integration tests run here (one kernel; the VM matrix is later).
@@ -111,7 +113,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --locked
+      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
 
       # User-space must compile for other arches and endianness (BTF parsing
       # handles endianness at runtime; this catches layout/porting breaks).
