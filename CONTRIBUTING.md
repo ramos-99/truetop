@@ -8,8 +8,15 @@ covers the toolchain, the test layers and what a reviewable change looks like.
 ```sh
 rustup toolchain install stable
 rustup toolchain install nightly --component rust-src
-cargo install bpf-linker --locked
+cargo binstall bpf-linker          # or: cargo install cargo-binstall, first
 ```
+
+`cargo install bpf-linker` builds it against a specific system LLVM, which
+upstream does not recommend and which CI does not do: the workflows install the
+prebuilt release binary, so a source build is a linker nobody else is running.
+If your distribution packages `bpf-linker` (Arch, Gentoo), note that
+`/usr/bin/bpf-linker` shadows `~/.cargo/bin` on a default `PATH` - check
+`which bpf-linker` before reporting a codegen difference.
 
 Nightly is not optional: `truetop/build.rs` compiles the eBPF object with `-Z
 build-std`, and `rustfmt.toml` uses unstable options. The user-space crates

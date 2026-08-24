@@ -55,7 +55,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install bpf-linker --version "${BPF_LINKER_VERSION}" --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker@${{ env.BPF_LINKER_VERSION }}
 
       # vmtest runs qemu on the host and talks to the guest over qemu-ga, which
       # the guest runs from this same host filesystem - so both packages must be

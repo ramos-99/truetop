@@ -94,7 +94,7 @@ needs the nightly toolchain and `bpf-linker`:
 ```sh
 rustup toolchain install stable
 rustup toolchain install nightly --component rust-src
-cargo install bpf-linker
+cargo binstall bpf-linker          # or: cargo install cargo-binstall, first
 ```
 
 Then either build the repository:
