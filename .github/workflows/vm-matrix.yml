@@ -26,7 +26,7 @@ env:
   CARGO_TERM_COLOR: always
   # Pin vmtest so a new CLI release can't silently change how the VM boots.
   VMTEST_VERSION: "0.18.0"
-  BPF_LINKER_VERSION: "0.10.4"
+  BPF_LINKER_VERSION: "0.11.0"
 
 permissions: {}
 

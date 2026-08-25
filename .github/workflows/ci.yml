@@ -7,8 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Pin bpf-linker so a new release can't silently change the BPF object's codegen.
-  BPF_LINKER_VERSION: "0.10.4"
+  # bpf-linker's LLVM must be no older than the one nightly rustc emits bitcode
+  # for, or linking fails with "Invalid record". 0.11.0 is LLVM 23; while the
+  # toolchain floats, this has to move with it rather than stay pinned behind.
+  BPF_LINKER_VERSION: "0.11.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
