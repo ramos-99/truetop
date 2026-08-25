@@ -9,6 +9,10 @@ repository.workspace = true
 license = "GPL-2.0-only OR MIT"
 description = "eBPF programs for truetop"
 
+# Read by truetop/build.rs and CI. Bump together with BPF_LINKER_VERSION.
+[package.metadata.ebpf]
+toolchain = "nightly-2026-08-25"
+
 [dependencies]
 truetop-common = { path = "../truetop-common", version = "0.1.0" }
 

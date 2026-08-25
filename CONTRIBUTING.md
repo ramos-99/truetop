@@ -7,9 +7,14 @@ covers the toolchain, the test layers and what a reviewable change looks like.
 
 ```sh
 rustup toolchain install stable
-rustup toolchain install nightly --component rust-src
+rustup toolchain install nightly-2026-08-25 --component rust-src
 cargo binstall bpf-linker          # or: cargo install cargo-binstall, first
 ```
+
+That nightly is the one pinned in `truetop-ebpf/Cargo.toml`, which is what the
+build actually uses; `bpf-linker` carries its own LLVM and cannot read bitcode
+from a newer rustc, so the pin and `BPF_LINKER_VERSION` in `.github/workflows/`
+move together.
 
 `cargo install bpf-linker` builds it against a specific system LLVM, which
 upstream does not recommend and which CI does not do: the workflows install the

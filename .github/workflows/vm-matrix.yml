@@ -47,9 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
+      - uses: ./.github/actions/ebpf-toolchain
 
       - uses: dtolnay/rust-toolchain@stable
 

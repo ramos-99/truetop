@@ -21,12 +21,16 @@ fn main() -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow!("no parent directory for {}", ebpf.manifest_path))?;
 
+    let toolchain = ebpf.metadata["ebpf"]["toolchain"]
+        .as_str()
+        .context("truetop-ebpf: [package.metadata.ebpf] toolchain is not set")?;
+
     aya_build::build_ebpf(
         [Package {
             name: ebpf.name.as_str(),
             root_dir: root_dir.as_str(),
             ..Default::default()
         }],
-        Toolchain::default(),
+        Toolchain::Custom(toolchain),
     )
 }

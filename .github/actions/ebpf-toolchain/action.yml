@@ -1,0 +1,13 @@
+name: eBPF toolchain
+description: >
+  Install the nightly pinned in truetop-ebpf/Cargo.toml, with rust-src, and
+  expose its name as $EBPF_TOOLCHAIN for steps that need to invoke it.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        toolchain=$(grep '^toolchain = ' truetop-ebpf/Cargo.toml | cut -d'"' -f2)
+        rustup toolchain install "$toolchain" --component rust-src
+        echo "EBPF_TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
