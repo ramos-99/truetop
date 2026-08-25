@@ -3,9 +3,14 @@
 
 use anyhow::{Context as _, Result, bail};
 
-const USAGE: &str = "\
-usage: truetop [--max-processes <N>] [--bench <TICKS>] [-h|--help] [-V|--version]
+use crate::ui::theme::Background;
 
+const USAGE: &str = "\
+usage: truetop [--background <NAME>] [--max-processes <N>] [--bench <TICKS>]
+               [-h|--help] [-V|--version]
+
+      --background <NAME>  the terminal's background: auto (the default), dark
+                           or light. auto asks the terminal
       --max-processes <N>  processes the accounting maps hold; the default is
                            derived from the CPU count, since a per-CPU map costs
                            8 bytes per entry per CPU and is allocated at load
@@ -15,6 +20,8 @@ usage: truetop [--max-processes <N>] [--bench <TICKS>] [-h|--help] [-V|--version
 
 pub(crate) struct Args {
     pub(crate) command: Command,
+    /// `None` asks the terminal; see `ui::theme::resolve`.
+    pub(crate) background: Option<Background>,
     /// `None` leaves the size to the machine; see `default_max_processes`.
     pub(crate) max_processes: Option<u32>,
 }
@@ -29,6 +36,7 @@ pub(crate) enum Command {
 pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Args> {
     let mut parsed = Args {
         command: Command::Ui,
+        background: None,
         max_processes: None,
     };
     while let Some(arg) = args.next() {
@@ -47,6 +55,15 @@ pub(crate) fn parse(mut args: impl Iterator<Item = String>) -> Result<Args> {
                     .parse()
                     .with_context(|| format!("--bench: `{value}` is not a tick count"))?;
                 parsed.command = Command::Bench(ticks);
+            }
+            "--background" => {
+                let value = args.next().context("--background needs a name")?;
+                parsed.background = match value.as_str() {
+                    "auto" => None,
+                    "dark" => Some(Background::Dark),
+                    "light" => Some(Background::Light),
+                    other => bail!("--background: `{other}` is not auto, dark or light"),
+                };
             }
             "--max-processes" => {
                 let value = args.next().context("--max-processes needs a count")?;
@@ -103,6 +120,21 @@ mod tests {
             parse_args(&["-V"]).unwrap().command,
             Command::Print(_)
         ));
+    }
+
+    #[test]
+    fn the_background_is_named_or_left_to_the_terminal() {
+        assert_eq!(parse_args(&[]).unwrap().background, None);
+        assert_eq!(
+            parse_args(&["--background", "auto"]).unwrap().background,
+            None
+        );
+        assert_eq!(
+            parse_args(&["--background", "light"]).unwrap().background,
+            Some(Background::Light)
+        );
+        assert!(parse_args(&["--background", "sepia"]).is_err());
+        assert!(parse_args(&["--background"]).is_err());
     }
 
     #[test]

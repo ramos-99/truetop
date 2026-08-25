@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, BorderType, Cell, Row, Table, TableState},
 };
 
-use super::{Sort, format_bytes, theme};
+use super::{Sort, format_bytes, theme, theme::Background};
 use crate::{backend::SystemState, metrics::ProcessMetrics};
 
 /// Columns as `(title, width, alignment)`; [`process_row`] emits cells in this
@@ -26,17 +26,30 @@ pub(super) const COL_CPU: usize = 3;
 pub(super) const COL_MEM: usize = 4;
 pub(super) const COL_IO: usize = 5;
 
+/// How the table is being looked at: everything the renderer owns rather than
+/// the snapshot.
+pub(super) struct View<'a> {
+    pub(super) background: Background,
+    pub(super) sort: Sort,
+    pub(super) descending: bool,
+    pub(super) filter: &'a str,
+}
+
 /// Render the table, returning how many rows it holds so the caller can clamp
 /// the selection and size a page jump.
 pub(super) fn draw(
     frame: &mut Frame,
     state: &SystemState,
-    sort: Sort,
-    descending: bool,
-    filter: &str,
+    view: View<'_>,
     selection: &mut TableState,
     area: Rect,
 ) -> usize {
+    let View {
+        background,
+        sort,
+        descending,
+        filter,
+    } = view;
     let rows = visible(&state.processes, sort, descending, filter);
 
     let arrow = if descending { "▾" } else { "▴" };
@@ -66,7 +79,7 @@ pub(super) fn draw(
     let body: Vec<Row> = rows
         .iter()
         .enumerate()
-        .map(|(index, p)| process_row(index, p, state.memory_total_bytes))
+        .map(|(index, p)| process_row(background, index, p, state.memory_total_bytes))
         .collect();
     let count = body.len();
     frame.render_stateful_widget(
@@ -113,7 +126,12 @@ fn matches_filter(p: &ProcessMetrics, filter: &str) -> bool {
     p.name.to_lowercase().contains(&needle) || p.pid.to_string().contains(&needle)
 }
 
-fn process_row(index: usize, p: &ProcessMetrics, memory_total: u64) -> Row<'static> {
+fn process_row(
+    background: Background,
+    index: usize,
+    p: &ProcessMetrics,
+    memory_total: u64,
+) -> Row<'static> {
     let [pid_a, user_a, prog_a, cpu_a, mem_a, io_a] = COLUMNS.map(|(_, _, align)| align);
     let idle = p.cpu.cpu_percent < 0.05;
     let name_style = Style::new().fg(if idle { theme::DIM } else { theme::TEXT });
@@ -135,7 +153,7 @@ fn process_row(index: usize, p: &ProcessMetrics, memory_total: u64) -> Row<'stat
         cell(io_text(p), io_a, io_style(p)),
     ]);
     // A blocked process outranks the striping that only groups rows.
-    match theme::io_row_bg(io_of(p)).or_else(|| theme::row_stripe(index)) {
+    match theme::io_row_bg(background, io_of(p)).or_else(|| theme::row_stripe(background, index)) {
         Some(bg) => row.style(Style::new().bg(bg)),
         None => row,
     }
@@ -233,7 +251,7 @@ mod tests {
 
     /// Every line of a rendered frame, borders and padding squeezed out so a row
     /// reads as the cells it holds.
-    fn render(sort: Sort, descending: bool, filter: &str) -> Vec<String> {
+    fn render(background: Background, sort: Sort, descending: bool, filter: &str) -> Vec<String> {
         let state = SystemState {
             processes: processes(),
             memory_total_bytes: 16 << 30,
@@ -246,9 +264,12 @@ mod tests {
                 draw(
                     frame,
                     &state,
-                    sort,
-                    descending,
-                    filter,
+                    View {
+                        background,
+                        sort,
+                        descending,
+                        filter,
+                    },
                     &mut selection,
                     frame.area(),
                 );
@@ -278,7 +299,7 @@ mod tests {
 
     #[test]
     fn a_process_the_kernel_gave_no_value_for_renders_a_dash() {
-        let lines = render(Sort::Cpu, true, "");
+        let lines = render(Background::Dark, Sort::Cpu, true, "");
         assert_eq!(line_for(&lines, "sleep"), "42 ramos sleep 0.0 - 0.2");
         assert_eq!(
             line_for(&lines, "cc1plus"),
@@ -288,7 +309,7 @@ mod tests {
 
     #[test]
     fn only_the_active_column_carries_the_sort_arrow() {
-        let header = |sort, descending| render(sort, descending, "")[1].clone();
+        let header = |sort, descending| render(Background::Dark, sort, descending, "")[1].clone();
         assert!(header(Sort::Cpu, true).contains("Cpu% ▾"));
         assert!(header(Sort::Cpu, false).contains("Cpu% ▴"));
         let by_memory = header(Sort::Mem, true);
@@ -298,7 +319,10 @@ mod tests {
 
     #[test]
     fn the_title_names_the_active_filter() {
-        assert!(render(Sort::Cpu, true, "")[0].contains("processes"));
-        assert!(render(Sort::Cpu, true, "fio")[0].contains("processes matching \"fio\""));
+        assert!(render(Background::Dark, Sort::Cpu, true, "")[0].contains("processes"));
+        assert!(
+            render(Background::Dark, Sort::Cpu, true, "fio")[0]
+                .contains("processes matching \"fio\"")
+        );
     }
 }

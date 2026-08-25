@@ -9,7 +9,7 @@
 
 mod header;
 mod table;
-mod theme;
+pub(crate) mod theme;
 
 use std::{
     io,
@@ -30,7 +30,7 @@ use ratatui::{
     widgets::TableState,
 };
 
-use crate::{backend::SystemState, system::Machine};
+use crate::{backend::SystemState, system::Machine, ui::theme::Background};
 
 /// Poll timeout that caps the redraw cadence at ~60 fps.
 const FRAME_BUDGET: Duration = Duration::from_millis(16);
@@ -54,6 +54,7 @@ impl Sort {
 
 /// Renderer-owned view state. None of it reaches the collector.
 struct App {
+    background: Background,
     selection: TableState,
     sort: Sort,
     descending: bool,
@@ -66,8 +67,9 @@ struct App {
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(background: Background) -> Self {
         Self {
+            background,
             selection: TableState::default().with_selected(0),
             sort: Sort::Cpu,
             descending: true,
@@ -147,9 +149,10 @@ pub fn render_app(
     state: Arc<ArcSwap<SystemState>>,
     running: Arc<AtomicBool>,
     machine: Machine,
+    background: Background,
 ) -> io::Result<()> {
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &state, &running, &machine);
+    let result = event_loop(&mut terminal, &state, &running, &machine, background);
     ratatui::restore();
     result
 }
@@ -159,8 +162,9 @@ fn event_loop(
     state: &ArcSwap<SystemState>,
     running: &AtomicBool,
     machine: &Machine,
+    background: Background,
 ) -> io::Result<()> {
-    let mut app = App::new();
+    let mut app = App::new(background);
     let mut shown = state.load_full();
     let mut last: *const SystemState = Arc::as_ptr(&shown);
     let mut redraw = true;
@@ -215,9 +219,12 @@ fn draw(frame: &mut Frame, state: &SystemState, machine: &Machine, app: &mut App
     app.rows = table::draw(
         frame,
         state,
-        app.sort,
-        app.descending,
-        &app.filter,
+        table::View {
+            background: app.background,
+            sort: app.sort,
+            descending: app.descending,
+            filter: &app.filter,
+        },
         &mut app.selection,
         areas[3],
     );
@@ -339,7 +346,7 @@ mod tests {
 
     #[test]
     fn re_pressing_the_active_column_reverses_it() {
-        let mut app = App::new();
+        let mut app = App::new(Background::Dark);
         assert!(app.descending);
         app.set_sort(Sort::Cpu);
         assert!(!app.descending);
@@ -349,7 +356,7 @@ mod tests {
 
     #[test]
     fn filter_editing_captures_keys_instead_of_commands() {
-        let mut app = App::new();
+        let mut app = App::new(Background::Dark);
         app.handle_key(KeyCode::Char('/'));
         for c in "fio".chars() {
             app.handle_key(KeyCode::Char(c));
@@ -363,7 +370,7 @@ mod tests {
 
     #[test]
     fn space_toggles_pause() {
-        let mut app = App::new();
+        let mut app = App::new(Background::Dark);
         app.handle_key(KeyCode::Char(' '));
         assert!(app.paused);
         app.handle_key(KeyCode::Char(' '));
@@ -382,7 +389,7 @@ mod tests {
         };
         let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test terminal");
         terminal
-            .draw(|frame| draw(frame, state, &machine, &mut App::new()))
+            .draw(|frame| draw(frame, state, &machine, &mut App::new(Background::Dark)))
             .expect("draw");
         let buffer = terminal.backend().buffer();
         (0..HEIGHT)

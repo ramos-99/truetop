@@ -70,7 +70,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     match ticks {
         Some(ticks) => backend::run_headless(collector, ticks),
-        None => run_ui(collector, cpus).await?,
+        None => run_ui(collector, cpus, ui::theme::resolve(args.background)).await?,
     }
 
     // `ebpf` owns the tracepoint links; dropping it here detaches them.
@@ -275,7 +275,11 @@ fn take_percpu_map(ebpf: &mut aya::Ebpf, name: &str) -> anyhow::Result<aya::maps
 
 /// Renderer on the main thread, collector on a 1 Hz Tokio task, plus a
 /// SIGINT/SIGTERM listener - until the user quits.
-async fn run_ui(collector: Collector, cpus: CpuCounts) -> anyhow::Result<()> {
+async fn run_ui(
+    collector: Collector,
+    cpus: CpuCounts,
+    background: ui::theme::Background,
+) -> anyhow::Result<()> {
     let shared = Arc::new(ArcSwap::from_pointee(SystemState::default()));
     let running = Arc::new(AtomicBool::new(true));
 
@@ -290,6 +294,7 @@ async fn run_ui(collector: Collector, cpus: CpuCounts) -> anyhow::Result<()> {
         Arc::clone(&shared),
         Arc::clone(&running),
         Machine::detect(cpus),
+        background,
     );
 
     running.store(false, Ordering::Relaxed);
