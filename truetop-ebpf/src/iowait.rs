@@ -19,9 +19,9 @@ const TASK_NOLOAD: u32 = 0x400;
 
 // tid → D-state switch-out timestamp. Plain, not LRU: an entry lives only from a
 // D switch-out to the next switch-in, so this is bounded by the threads asleep
-// at one instant rather than by the process count. The residual limit is real
-// though: past 16,384 concurrent D-sleepers a stamp is dropped and that thread's
-// interval goes unmeasured.
+// at one instant rather than by the process count. Sized by `--max-processes`
+// like the rest; past that many concurrent D-sleepers a stamp is dropped and
+// that thread's interval goes unmeasured.
 #[map]
 static SLEEP_SINCE: HashMap<u32, u64> = HashMap::with_max_entries(16384, 0);
 // tgid → accumulated D-sleep nanoseconds (the counter user space diffs). LRU for

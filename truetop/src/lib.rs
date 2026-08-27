@@ -134,10 +134,11 @@ fn default_max_processes(possible_cpus: usize) -> u32 {
     affordable.clamp(FLOOR, CEILING)
 }
 
-/// What those maps commit at load: two per-CPU counters plus the name map.
+/// What those maps commit at load: two per-CPU counters, the name map, and the
+/// tid → timestamp map (a `u32` key and a `u64` value).
 fn map_bytes(entries: u32, possible_cpus: usize) -> u64 {
     let entries = u64::from(entries);
-    2 * entries * 8 * possible_cpus as u64 + entries * COMM_LEN as u64
+    2 * entries * 8 * possible_cpus as u64 + entries * COMM_LEN as u64 + entries * 12
 }
 
 const PRIVILEGE_HINT: &str = "truetop loads eBPF, which needs privilege: run it as root (sudo truetop), or \
@@ -196,11 +197,11 @@ fn load_ebpf(max_processes: u32) -> anyhow::Result<aya::Ebpf> {
         .override_global("LIVE_OFFSET", &live, true)
         .override_global("CRED_UID_OFFSET", &cred_uid, true)
         .override_global("HAS_PREV_STATE", &u32::from(has_prev_state), true)
-        // The process-keyed maps. Not SLEEP_SINCE, which is keyed by thread and
-        // bounded by the threads asleep at one instant, not by process count.
+        // The accounting maps, all sized by `--max-processes`.
         .map_max_entries("CPU_NS", max_processes)
         .map_max_entries("IOWAIT_NS", max_processes)
         .map_max_entries("COMM_MAP", max_processes)
+        .map_max_entries("SLEEP_SINCE", max_processes)
         .load(aya::include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
             "/truetop"
