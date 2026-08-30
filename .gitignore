@@ -15,8 +15,11 @@ Cargo.lock.bak
 .fleet/
 .zed/
 
-# Claude Code (local settings)
+# Agent tooling. AGENTS.md is the checked-in guidance; CLAUDE.md is a local
+# pointer at it, for the one tool that looks for that name.
 .claude/
+.claudeignore
+/CLAUDE.md
 
 # macOS
 .DS_Store

@@ -151,7 +151,7 @@ how you ran it (root, `setcap`, container, VM), and the exact output. If the
 complaint is a wrong number, include the same window from whatever you compared
 against. Security issues go through `SECURITY.md`, not the issue tracker.
 
-If you work with an agentic AI assistant, point it at `CLAUDE.md`, which states
+If you work with an agentic AI assistant, point it at `AGENTS.md`, which states
 the same architectural constraints in a form it will follow.
 
 ## Licensing
