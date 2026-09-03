@@ -223,14 +223,15 @@ in user space.
 </div>
 
 Reproduce these with `cargo xtask bench`. Re-measured 2026-07-29 on the reference
-machine named in [bench/BENCHMARKS.md](bench/BENCHMARKS.md), which also records
-what moved since these were first published and why.
+machine named in [bench/BENCHMARKS.md](bench/BENCHMARKS.md), the syscall row on
+2026-09-03, which also records what moved since these were first published and
+why.
 
 | metric | truetop | htop / btop |
 | --- | --- | --- |
 | CPU at ~7,050 processes | 1.3% of a core, flat | 33.6% / 23.6%, climbing |
 | CPU under ~3,260 forks/s churn | 1.3% of a core | 2.7% (htop) |
-| data syscalls per refresh at ~5,350 | ~3,970 | ~12,900 (htop) |
+| data syscalls per refresh at ~5,350 | ~3,730 | ~12,900 (htop) |
 | per-process collection work | ~26 ns | ~12.3 µs (procfs) |
 | RSS, this process, at ~7,050 processes | ~33 MiB, flat | ~19 / ~17 MiB, climbing |
 

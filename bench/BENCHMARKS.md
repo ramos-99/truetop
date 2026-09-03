@@ -8,7 +8,8 @@
 ![built with](https://img.shields.io/badge/Rust-2024-DEA584?style=flat-square&logo=rust&logoColor=white)
 
 Reference machine: AMD Ryzen 7 5800HS, 8 cores / 16 threads. Re-measured
-2026-07-29 against the code in this tree; details and caveats below.
+2026-07-29 against the code in this tree, macro on 2026-09-03; details and
+caveats below.
 
 Two things moved since this page was first written:
 
@@ -171,14 +172,14 @@ read the low end as noisy rather than exact:
 
 | Processes | top    | htop   | truetop | truetop's edge |
 | --------: | -----: | -----: | ------: | -------------: |
-|       343 |    688 |    266 |     561 |           0.5x |
-|       592 |  1,186 |    757 |   1,404 |           0.5x |
-|       845 |  1,640 |  1,381 |   1,543 |           0.9x |
-|     1,347 |  2,697 |  2,511 | **1,815** |         1.4x |
-|     2,348 |  4,699 |  4,279 | **2,355** |         1.8x |
-|     5,349 | 10,030 | 12,897 | **3,968** |         3.2x |
+|       392 |    786 |    282 |     580 |           0.5x |
+|       643 |  1,289 |    833 |   1,205 |           0.7x |
+|       893 |  1,629 |  1,395 |   1,350 |           1.0x |
+|     1,393 |  2,792 |  2,531 | **1,621** |         1.6x |
+|     2,396 |  4,782 |  4,815 | **2,131** |         2.2x |
+|     5,354 | 10,037 | 12,898 | **3,731** |         2.7x |
 
-Below ~850 processes htop costs fewer syscalls than truetop: with almost every
+Below ~900 processes htop costs fewer syscalls than truetop: with almost every
 process visible at once, truetop's per-row `statm` and name-lookup reads track
 active count directly, and procfs's single flat read per process wins at that
 scale. Past ~1,300 truetop pulls ahead and the gap widens with N. Edge is the
