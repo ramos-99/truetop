@@ -50,16 +50,16 @@ device latency per process is next, see [Roadmap](#roadmap).
 
 | | truetop | top | htop | btop | iotop |
 | --- | :---: | :---: | :---: | :---: | :---: |
-| Per-process I/O wait (time blocked) | yes | no | no | no | gated <sup>1</sup> |
-| Per-process I/O throughput (bytes/s) | no | no | yes | no | yes |
-| CPU and memory per process | yes | yes | yes | yes | no |
+| I/O wait, per process | yes | no | no | no | gated <sup>1</sup> |
+| I/O throughput, per process | no | no | yes | no | yes |
+| CPU and memory | yes | yes | yes | yes | no |
 | Process tree | no | yes | yes | yes | no |
 | Kill, signal, renice | no | yes | yes | yes | no |
 | Per-thread rows | no | yes | yes | no | yes |
 | cgroup column | no | no | yes | no | no |
-| Reads from | eBPF | `/proc` | `/proc` | `/proc` | netlink |
-| Privileges | `CAP_BPF`, `CAP_PERFMON` | none | none | none | root or `CAP_NET_ADMIN` |
-| Kernel needs | 5.15+ with BTF | any | any | any | 4 configs + sysctl <sup>2</sup> |
+| Reads from | eBPF | procfs | procfs | procfs | netlink |
+| Privileges | CAP_BPF, CAP_PERFMON | none | none | none | root or CAP_NET_ADMIN |
+| Kernel | 5.15+ with BTF | any | any | any | 4 configs + sysctl <sup>2</sup> |
 
 truetop does not manage processes: there is no tree, no signal, no renice.
 
