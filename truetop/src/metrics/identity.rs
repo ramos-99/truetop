@@ -15,6 +15,12 @@ struct Seeded {
     uid: u32,
 }
 
+/// A process's `comm` and the passwd name for its `cred->uid`.
+pub(crate) struct Named {
+    pub(crate) name: String,
+    pub(crate) user: Option<String>,
+}
+
 pub(crate) struct Resolver {
     comm: BpfHashMap<MapData, u32, Identity>,
     seed: HashMap<u32, Seeded>,
@@ -30,14 +36,21 @@ impl Resolver {
         }
     }
 
-    /// Live `COMM_MAP` wins; fall back to the startup `/proc` snapshot.
-    pub(crate) fn resolve(&self, tgid: u32) -> String {
-        if let Ok(identity) = self.comm.get(&tgid, 0) {
-            return decode_comm(identity.comm);
+    /// Both fields from one `COMM_MAP` read, since a single `Identity` carries
+    /// them. The live map wins; fall back to the startup `/proc` snapshot, which
+    /// is all a process predating truetop has.
+    pub(crate) fn named(&self, tgid: u32) -> Named {
+        let (name, uid) = match self.comm.get(&tgid, 0) {
+            Ok(identity) => (decode_comm(identity.comm), Some(identity.uid)),
+            Err(_) => match self.seed.get(&tgid) {
+                Some(seeded) => (seeded.name.clone(), Some(seeded.uid)),
+                None => (UNKNOWN.to_owned(), None),
+            },
+        };
+        Named {
+            name,
+            user: uid.map(|uid| self.passwd_name(uid)),
         }
-        self.seed
-            .get(&tgid)
-            .map_or_else(|| UNKNOWN.to_owned(), |seeded| seeded.name.clone())
     }
 
     /// Drop a departed process's name once user space has finished with it, so
@@ -48,19 +61,12 @@ impl Resolver {
         self.seed.remove(&tgid);
     }
 
-    /// Owning user, or the numeric uid when it maps to no passwd entry. `None`
-    /// for a process we have neither captured nor seeded.
-    pub(crate) fn user(&self, tgid: u32) -> Option<String> {
-        let uid = match self.comm.get(&tgid, 0) {
-            Ok(identity) => identity.uid,
-            Err(_) => self.seed.get(&tgid)?.uid,
-        };
-        Some(
-            self.users
-                .get(&uid)
-                .cloned()
-                .unwrap_or_else(|| uid.to_string()),
-        )
+    /// The `/etc/passwd` name for `uid`, or the number when it maps to no entry.
+    fn passwd_name(&self, uid: u32) -> String {
+        self.users
+            .get(&uid)
+            .cloned()
+            .unwrap_or_else(|| uid.to_string())
     }
 }
 

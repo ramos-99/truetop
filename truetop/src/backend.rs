@@ -161,10 +161,11 @@ impl Collector {
 
     /// One candidate pid to a full row: its counter values plus name, user, RSS.
     fn enrich(&self, pid: u32, cpu: &Deltas, io: &Deltas) -> ProcessMetrics {
+        let named = self.names.named(pid);
         ProcessMetrics {
             pid,
-            name: self.names.resolve(pid),
-            user: self.names.user(pid),
+            name: named.name,
+            user: named.user,
             cpu: CpuMetrics {
                 cpu_percent: cpu.get(&pid).copied().unwrap_or(0.0),
             },
