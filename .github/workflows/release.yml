@@ -1,0 +1,106 @@
+name: release
+
+# Attaches a static x86-64 binary and its checksum to a published release. The
+# release itself is made by hand, in the UI or with `gh release create`; this
+# only fills it in, so a tag pushed by mistake ships nothing. Same split
+# bpf-linker uses.
+#
+# x86-64 only, deliberately: aarch64 compiles and CI keeps checking that it
+# does, but the programs have never been loaded on an ARM kernel, so that binary
+# would be the project's first untested claim. An ARM kernel joins vm-matrix.yml
+# first, then the binary follows (README: Requirements, Roadmap).
+#
+# Static musl, not glibc: the binary loads eBPF on kernels 5.15 through 6.18, so
+# it has no business also demanding a recent glibc from the distro it lands on.
+# musl targets link self-contained - rust-lld plus a bundled libc.a - so no
+# musl-gcc is needed here, and nothing in truetop wants NSS: uids are mapped by
+# parsing /etc/passwd directly (truetop/src/metrics/identity.rs), which is what
+# makes a fully static build honest rather than quietly broken.
+#
+# workflow_dispatch runs everything except the upload, so this can be exercised
+# without spending a release to find out it was broken.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TARGET: x86_64-unknown-linux-musl
+  # Bump together with the toolchain in truetop-ebpf/Cargo.toml.
+  BPF_LINKER_VERSION: "0.11.0"
+
+permissions: {}
+
+jobs:
+  binary:
+    runs-on: ubuntu-latest
+    permissions:
+      # The upload step, and nothing else here, writes to the release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/ebpf-toolchain
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      # No rust-cache: a published artifact is worth a cold build rather than
+      # whatever a cache key shared with ci.yml happened to hold.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker@${{ env.BPF_LINKER_VERSION }}
+
+      - name: Name the artifact
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version=$(grep -m1 '^version = ' truetop/Cargo.toml | cut -d'"' -f2)
+          # A release tag that disagrees with the manifest ships a binary
+          # reporting a version that matches no release. Fail before the build.
+          if [ -n "${TAG}" ] && [ "${TAG}" != "v${version}" ]; then
+            echo "release ${TAG} != truetop/Cargo.toml v${version}" >&2
+            exit 1
+          fi
+          echo "NAME=truetop-${version}-${TARGET}" >> "$GITHUB_ENV"
+
+      - run: cargo build -p truetop --release --locked --target "${TARGET}"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/${NAME}"
+          install -m 0755 "target/${TARGET}/release/truetop" "dist/${NAME}/truetop"
+          # Stripped after linking rather than through the release profile: that
+          # profile is inherited by the nested cargo that builds truetop-ebpf,
+          # where the debug info is the BTF the object carries. This rewrites the
+          # outer ELF only - the eBPF object rides in .rodata untouched, which
+          # the next step proves by loading it.
+          strip "dist/${NAME}/truetop"
+          install -m 0644 README.md LICENSE-MIT LICENSE-APACHE LICENSE-GPL2 "dist/${NAME}/"
+          tar -C dist -czf "dist/${NAME}.tar.gz" "${NAME}"
+          (cd dist && sha256sum "${NAME}.tar.gz" | tee SHA256SUMS)
+
+      # The runner is a real kernel with BTF and passwordless sudo - ci.yml
+      # already loads the programs here - so the artifact loads its own eBPF
+      # before anyone can download it. Two ticks is enough to attach, collect and
+      # exit, and it is the only check that the strip above left the object intact.
+      - name: Load the packaged binary
+        run: sudo "dist/${NAME}/truetop" --bench 2
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NAME }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "${TAG}" "dist/${NAME}.tar.gz" dist/SHA256SUMS
