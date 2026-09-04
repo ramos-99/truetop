@@ -1,9 +1,13 @@
 name: release
 
-# Attaches a static x86-64 binary and its checksum to a published release. The
-# release itself is made by hand, in the UI or with `gh release create`; this
-# only fills it in, so a tag pushed by mistake ships nothing. Same split
-# bpf-linker uses.
+# Push a `v*` tag and this builds a static x86-64 binary, proves it loads its
+# own eBPF on a real kernel, and leaves a draft release with the tarball and
+# checksum attached. Reviewing and publishing that draft is the only manual
+# step, and it comes last: if any step here fails, no release exists at all.
+#
+# The build deliberately runs before the release is created, which is the one
+# place this differs from ripgrep - it creates the release first because it has
+# many build jobs uploading into it, and this has one.
 #
 # x86-64 only, deliberately: aarch64 compiles and CI keeps checking that it
 # does, but the programs have never been loaded on an ARM kernel, so that binary
@@ -17,12 +21,12 @@ name: release
 # parsing /etc/passwd directly (truetop/src/metrics/identity.rs), which is what
 # makes a fully static build honest rather than quietly broken.
 #
-# workflow_dispatch runs everything except the upload, so this can be exercised
-# without spending a release to find out it was broken.
+# workflow_dispatch builds and packages without creating anything, so the whole
+# path can be exercised without spending a tag to find out it was broken.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 env:
@@ -37,7 +41,7 @@ jobs:
   binary:
     runs-on: ubuntu-latest
     permissions:
-      # The upload step, and nothing else here, writes to the release.
+      # The final step, and nothing else here, writes to the repository.
       contents: write
     steps:
       - uses: actions/checkout@v7
@@ -55,15 +59,13 @@ jobs:
           tool: bpf-linker@${{ env.BPF_LINKER_VERSION }}
 
       - name: Name the artifact
-        env:
-          TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           version=$(grep -m1 '^version = ' truetop/Cargo.toml | cut -d'"' -f2)
-          # A release tag that disagrees with the manifest ships a binary
-          # reporting a version that matches no release. Fail before the build.
-          if [ -n "${TAG}" ] && [ "${TAG}" != "v${version}" ]; then
-            echo "release ${TAG} != truetop/Cargo.toml v${version}" >&2
+          # A tag that disagrees with the manifest ships a binary reporting a
+          # version that matches no release. Fail before anything is built.
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} != truetop/Cargo.toml v${version}" >&2
             exit 1
           fi
           echo "NAME=truetop-${version}-${TARGET}" >> "$GITHUB_ENV"
@@ -92,15 +94,41 @@ jobs:
       - name: Load the packaged binary
         run: sudo "dist/${NAME}/truetop" --bench 2
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.NAME }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
-      - name: Upload to the release
-        if: github.event_name == 'release'
+      # Draft, and created only once the binary above has run: a failed build
+      # leaves no release behind at all, and the one that does appear already
+      # has its files on it. A tag carrying a suffix (v0.1.0-rc1) is marked a
+      # prerelease, which keeps it out of `latest`.
+      - name: Draft the release
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "${TAG}" "dist/${NAME}.tar.gz" dist/SHA256SUMS
+        run: |
+          set -euo pipefail
+          cat > notes.md <<'EOF'
+          Static x86-64 binary, no runtime dependencies: it needs nothing from the
+          distribution it lands on, only Linux 5.15 or newer with
+          `CONFIG_DEBUG_INFO_BTF=y`, and `CAP_BPF`/`CAP_PERFMON` or root.
+
+          ```sh
+          tar xzf truetop-*-x86_64-unknown-linux-musl.tar.gz
+          sha256sum -c SHA256SUMS
+          sudo ./truetop
+          sudo setcap cap_bpf,cap_perfmon+ep ./truetop   # then run it unprivileged
+          ```
+          EOF
+          flags=()
+          case "${GITHUB_REF_NAME}" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "${GITHUB_REF_NAME}" \
+            --draft \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --generate-notes \
+            "${flags[@]}" \
+            "dist/${NAME}.tar.gz" dist/SHA256SUMS
