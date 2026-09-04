@@ -10,8 +10,9 @@
 
 _The I/O-wait column `top`, `htop` and `btop` don't have._
 
-**Pre-release.** Builds from source, no packaged binaries yet - see [Install](#install).
+**Early release.** A static x86-64 binary, or a source build - see [Install](#install).
 
+[![Release](https://img.shields.io/github/v/release/ramos-99/truetop?style=for-the-badge&logo=github&label=release&color=2EA043)](https://github.com/ramos-99/truetop/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/ci.yml?style=for-the-badge&logo=github&label=CI)](https://github.com/ramos-99/truetop/actions/workflows/ci.yml)
 [![kernel matrix](https://img.shields.io/github/actions/workflow/status/ramos-99/truetop/vm-matrix.yml?style=for-the-badge&logo=linux&logoColor=white&label=kernels%205.15%E2%80%936.18)](https://github.com/ramos-99/truetop/actions/workflows/vm-matrix.yml)
 [![eBPF CO-RE](https://img.shields.io/badge/eBPF-CO--RE-F76800?style=for-the-badge&logoColor=white)](#how-it-works)
@@ -91,8 +92,24 @@ device latency per process is next, see [Roadmap](#roadmap).
 
 ## Install
 
-There is no published binary yet. The build compiles the eBPF object, so it
-needs the nightly toolchain and `bpf-linker`:
+Download the [latest release](https://github.com/ramos-99/truetop/releases/latest) -
+static x86-64, nothing needed beyond a kernel meeting [Requirements](#requirements):
+
+```sh
+sha256sum -c SHA256SUMS
+tar xzf truetop-*-x86_64-unknown-linux-musl.tar.gz
+sudo ./truetop
+```
+
+The tarball also carries a signed build provenance, so it can be traced to the
+workflow run and commit that produced it, not only checked for corruption:
+
+```sh
+gh attestation verify truetop-*.tar.gz --repo ramos-99/truetop
+```
+
+Or build it. That compiles the eBPF object, so it needs the nightly toolchain
+and `bpf-linker`:
 
 ```sh
 rustup toolchain install stable
@@ -122,7 +139,7 @@ cargo install --locked --git https://github.com/ramos-99/truetop truetop
 and resolves the dependency graph afresh, so the build you get is not the build
 CI tested.
 
-Prebuilt releases and an AUR package are on the [roadmap](#roadmap).
+An AUR package is on the [roadmap](#roadmap).
 
 ## Usage
 
@@ -281,6 +298,7 @@ memory moves in-kernel with everything else.
   here.
 - Memory in-kernel, once an accurate per-process interface exists.
 - Kernels 5.10 through 5.13 in CI, which take the pre-5.14 `state` field path.
+- An AUR package, and whatever else packages a static binary cleanly.
 - aarch64 support: an ARM kernel in the matrix first, then an ARM binary in the
   releases. Until both exist the answer to "does it run on ARM?" is that nobody
   has checked.

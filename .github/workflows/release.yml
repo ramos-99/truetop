@@ -41,8 +41,11 @@ jobs:
   binary:
     runs-on: ubuntu-latest
     permissions:
-      # The final step, and nothing else here, writes to the repository.
+      # Creating the draft release, at the end.
       contents: write
+      # Signing the tarball's provenance, and recording it.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
 
@@ -93,6 +96,16 @@ jobs:
       # exit, and it is the only check that the strip above left the object intact.
       - name: Load the packaged binary
         run: sudo "dist/${NAME}/truetop" --bench 2
+
+      # The checksum proves the tarball arrived intact; it cannot prove where it
+      # came from, since whoever could replace the file could replace the sums
+      # beside it. This records, in a public log, that this exact tarball was
+      # built by this workflow at this commit - `gh attestation verify
+      # truetop-*.tar.gz --repo ramos-99/truetop` checks it against that log.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/${{ env.NAME }}.tar.gz
 
       - uses: actions/upload-artifact@v7
         with:
