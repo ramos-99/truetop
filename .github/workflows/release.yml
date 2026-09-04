@@ -129,11 +129,13 @@ jobs:
           `CONFIG_DEBUG_INFO_BTF=y`, and `CAP_BPF`/`CAP_PERFMON` or root.
 
           ```sh
-          tar xzf truetop-*-x86_64-unknown-linux-musl.tar.gz
           sha256sum -c SHA256SUMS
+          tar xzf truetop-*-x86_64-unknown-linux-musl.tar.gz
           sudo ./truetop
           sudo setcap cap_bpf,cap_perfmon+ep ./truetop   # then run it unprivileged
           ```
+
+          Provenance: `gh attestation verify truetop-*.tar.gz --repo ramos-99/truetop`.
           EOF
           flags=()
           case "${GITHUB_REF_NAME}" in *-*) flags+=(--prerelease) ;; esac
