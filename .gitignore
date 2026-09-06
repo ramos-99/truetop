@@ -57,6 +57,7 @@ __pycache__/
 /PROJECT-BRIEF.md
 /CODE-DEEP-DIVE.md
 /AUDIT.md
+/RUST-PLAN.md
 
 # Integration-test scratch (removed by the test's guard; kept out if killed)
 truetop/iowait-scratch.tmp
