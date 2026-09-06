@@ -47,7 +47,9 @@ exception needs the same argument made explicitly.
   the parent's `comm`), so fork-per-connection servers are named without `/proc`
 - `sched_process_exit` - PID lifecycle cleanup
 - `commit_creds` (fentry) - the uid after a process changes credentials
-- `block_rq_issue` / `block_rq_complete` - block I/O device latency (Phase 2b)
+
+Block I/O device latency (`block_rq_issue` / `block_rq_complete`) is planned,
+not attached: nothing in the tree hooks either. See §5.
 
 Memory (RSS) is read from `/proc` in user space: since Linux 6.2 it lives in a
 `percpu_counter` that eBPF cannot sum exactly (see README).
