@@ -117,7 +117,7 @@ jobs:
         with:
           tool: bpf-linker@${{ env.BPF_LINKER_VERSION }}
 
-      - run: cargo xtask test
+      - run: cargo xtask test cross_kernel
 
   cross-check:
     strategy:
