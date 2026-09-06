@@ -1,0 +1,5 @@
+# makepkg working trees and output
+/pkg/
+/src/
+/*.pkg.tar.zst
+/*.tar.gz

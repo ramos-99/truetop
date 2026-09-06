@@ -1,0 +1,10 @@
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/bin/truetop
+
+[Action]
+Description = Reapplying capabilities for truetop
+When = PostTransaction
+Exec = /usr/bin/setcap cap_bpf,cap_perfmon+ep /usr/bin/truetop

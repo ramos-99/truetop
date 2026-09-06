@@ -1,0 +1,34 @@
+# Maintainer: Martim Ramos <martimcr@gmail.com>
+
+pkgname=truetop-bin
+pkgver=0.1.1
+pkgrel=1
+pkgdesc='Per-process Linux monitor built on eBPF, including per-process I/O wait'
+arch=(x86_64)
+url='https://github.com/ramos-99/truetop'
+# User space is MIT OR Apache-2.0; the eBPF object embedded in the binary is
+# GPL-2.0-only OR MIT, matching what it declares to the kernel verifier. MIT is
+# a license family, so its text ships below; the other two come from `licenses`.
+license=('(MIT OR Apache-2.0) AND (GPL-2.0-only OR MIT)')
+# Statically linked against musl: nothing is read from the system but kernel
+# interfaces. Linux 5.15 or newer built with CONFIG_DEBUG_INFO_BTF=y is required
+# and no dependency can express it; truetop names the option and exits without.
+depends=()
+provides=("truetop=$pkgver")
+conflicts=(truetop truetop-git)
+install="$pkgname.install"
+_archive="truetop-$pkgver-$CARCH-unknown-linux-musl"
+source=("$_archive.tar.gz::$url/releases/download/v$pkgver/$_archive.tar.gz"
+        truetop-setcap.hook)
+sha256sums=('576e7b422ce17973dfe492a54d60598b692e56e19e99d2c5d7ec27289431a356'
+            'd000ed4c1e62859001e36aa99bc567c8007ddcf1e633284d0d203736c329f92f')
+
+package() {
+	install -Dm644 truetop-setcap.hook \
+		"$pkgdir/usr/share/$pkgname/hooks/truetop-setcap.hook"
+
+	cd "$_archive"
+	install -Dm755 truetop "$pkgdir/usr/bin/truetop"
+	install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+	install -Dm644 LICENSE-MIT -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

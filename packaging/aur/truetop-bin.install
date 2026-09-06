@@ -1,0 +1,17 @@
+post_install() {
+	cat <<'MSG'
+truetop loads eBPF programs, so it needs privileges:
+
+    sudo truetop
+
+To run it as your own user, grant the binary the two capabilities it uses. Any
+local user can then load truetop's programs into the kernel:
+
+    sudo setcap cap_bpf,cap_perfmon+ep /usr/bin/truetop
+
+Every upgrade replaces the binary and drops them again. To have them reapplied,
+enable the hook this package ships:
+
+    sudo ln -s /usr/share/truetop-bin/hooks/truetop-setcap.hook /etc/pacman.d/hooks/
+MSG
+}
