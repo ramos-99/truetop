@@ -23,10 +23,15 @@ If your distribution packages `bpf-linker` (Arch, Gentoo), note that
 `/usr/bin/bpf-linker` shadows `~/.cargo/bin` on a default `PATH` - check
 `which bpf-linker` before reporting a codegen difference.
 
-Nightly is not optional: `truetop/build.rs` compiles the eBPF object with `-Z
-build-std`, and `rustfmt.toml` uses unstable options. The user-space crates
-build on stable. Loading anything needs `CONFIG_DEBUG_INFO_BTF=y` and either
-root or `CAP_BPF` plus `CAP_PERFMON`.
+Nightly features are not optional: `truetop/build.rs` compiles the eBPF object
+with `-Z build-std`, and `rustfmt.toml` uses unstable options. The user-space
+crates build on stable. Loading anything needs `CONFIG_DEBUG_INFO_BTF=y` and
+either root or `CAP_BPF` plus `CAP_PERFMON`.
+
+The pinned date is recommended, not mandatory. `TRUETOP_EBPF_TOOLCHAIN` names a
+toolchain to use instead, for packagers who build with their own compiler; on
+stable that also wants `RUSTC_BOOTSTRAP=1`, which truetop does not set for you.
+CI covers that route in `ci.yml`'s `packaging` job.
 
 ## Layout
 

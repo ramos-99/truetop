@@ -12,5 +12,5 @@ use which::which;
 fn main() {
     let bpf_linker =
         which("bpf-linker").expect("bpf-linker not on $PATH; `cargo install bpf-linker`");
-    println!("cargo:rerun-if-changed={}", bpf_linker.display());
+    println!("cargo::rerun-if-changed={}", bpf_linker.display());
 }
