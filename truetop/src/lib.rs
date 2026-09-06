@@ -296,12 +296,43 @@ async fn run_ui(
         Arc::clone(&running),
         Machine::detect(cpus),
         background,
+        &|| !collector_task.is_finished(),
     );
 
     running.store(false, Ordering::Relaxed);
-    collector_task.abort();
     signal_task.abort();
-    result.map_err(Into::into)
+
+    match result {
+        // The task has already finished, so this await returns at once.
+        Ok(ui::Exit::CollectorGone) => Err(collector_died(collector_task.await.err())),
+        outcome => {
+            collector_task.abort();
+            outcome.map(|_| ()).map_err(Into::into)
+        }
+    }
+}
+
+/// The error for a collector that ended on its own, naming the cause.
+fn collector_died(join: Option<tokio::task::JoinError>) -> anyhow::Error {
+    let cause = match join {
+        Some(err) if err.is_panic() => {
+            let payload = err.into_panic();
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned());
+            match message {
+                Some(message) => format!("panicked: {message}"),
+                None => "panicked".to_owned(),
+            }
+        }
+        Some(_) => "was cancelled".to_owned(),
+        None => "returned unexpectedly".to_owned(),
+    };
+    anyhow::anyhow!(
+        "collection stopped, so nothing on screen was current: {cause}. Restart truetop, and report this at {}/issues",
+        env!("CARGO_PKG_REPOSITORY")
+    )
 }
 
 /// Load and attach the raw tracepoint whose program and tracepoint share `name`.
@@ -380,5 +411,35 @@ mod tests {
         assert_eq!(privilege_hint(&anyhow::anyhow!("COMM_MAP not found")), None);
         let missing = anyhow::Error::new(Error::from(ErrorKind::NotFound));
         assert_eq!(privilege_hint(&missing), None);
+    }
+
+    /// A panic payload is `&str` for a literal and `String` for a formatted
+    /// message. Both downcasts must reach the text the user reads.
+    #[tokio::test]
+    async fn a_panicking_collector_carries_its_panic_text_out() {
+        let literal = tokio::spawn(async { panic!("COMM_MAP read failed") });
+        let message = super::collector_died(literal.await.err()).to_string();
+        assert!(message.contains("COMM_MAP read failed"), "{message}");
+
+        let formatted = tokio::spawn(async { panic!("{}", "tick 42 overflowed") });
+        let message = super::collector_died(formatted.await.err()).to_string();
+        assert!(message.contains("tick 42 overflowed"), "{message}");
+    }
+
+    /// An undecodable panic, a cancellation and a plain return are three
+    /// different endings and must not read alike.
+    #[tokio::test]
+    async fn the_endings_are_told_apart() {
+        let undecodable = tokio::spawn(async { std::panic::panic_any(42u8) });
+        let aborted = tokio::spawn(std::future::pending::<()>());
+        aborted.abort();
+
+        let panicked = super::collector_died(undecodable.await.err()).to_string();
+        let cancelled = super::collector_died(aborted.await.err()).to_string();
+        let returned = super::collector_died(None).to_string();
+
+        assert_ne!(panicked, cancelled);
+        assert_ne!(cancelled, returned);
+        assert_ne!(panicked, returned);
     }
 }

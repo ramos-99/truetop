@@ -145,15 +145,43 @@ impl App {
 
 // ── Entry & loop ─────────────────────────────────────────────────────────────
 
+/// Why the render loop stopped; a dead collector is an error, not a quit.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Exit {
+    RequestedQuit,
+    CollectorGone,
+}
+
 pub fn render_app(
     state: Arc<ArcSwap<SystemState>>,
     running: Arc<AtomicBool>,
     machine: Machine,
     background: Background,
-) -> io::Result<()> {
+    collector_alive: &dyn Fn() -> bool,
+) -> io::Result<Exit> {
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &state, &running, &machine, background);
+    // The hook `ratatui::init` sets writes to the terminal. Run it only for this
+    // thread's panics; another thread's reaches the caller through its
+    // `JoinHandle`.
+    let renderer = std::thread::current().id();
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if std::thread::current().id() == renderer {
+            previous(info);
+        }
+    }));
+
+    let result = event_loop(
+        &mut terminal,
+        &state,
+        &running,
+        &machine,
+        background,
+        collector_alive,
+    );
     ratatui::restore();
+    // Back to the default hook: the terminal is restored, so a panic can print.
+    let _ = std::panic::take_hook();
     result
 }
 
@@ -163,13 +191,14 @@ fn event_loop(
     running: &AtomicBool,
     machine: &Machine,
     background: Background,
-) -> io::Result<()> {
+    collector_alive: &dyn Fn() -> bool,
+) -> io::Result<Exit> {
     let mut app = App::new(background);
     let mut shown = state.load_full();
     let mut last: *const SystemState = Arc::as_ptr(&shown);
     let mut redraw = true;
 
-    while running.load(Ordering::Relaxed) {
+    while running.load(Ordering::Relaxed) && collector_alive() {
         if !app.paused {
             let latest = state.load_full();
             if !std::ptr::eq(Arc::as_ptr(&latest), last) {
@@ -197,7 +226,11 @@ fn event_loop(
             redraw = false;
         }
     }
-    Ok(())
+    if collector_alive() {
+        Ok(Exit::RequestedQuit)
+    } else {
+        Ok(Exit::CollectorGone)
+    }
 }
 
 // ── Layout ───────────────────────────────────────────────────────────────────
