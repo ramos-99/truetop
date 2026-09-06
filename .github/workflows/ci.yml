@@ -94,6 +94,31 @@ jobs:
       # eBPF integration tests run here (one kernel; the VM matrix is later).
       - run: cargo xtask test
 
+  # The path a distribution packager takes: their own compiler, the pinned
+  # nightly not installed at all, and `-Z build-std` opened with RUSTC_BOOTSTRAP
+  # rather than by the channel. It runs the eBPF tests rather than stopping at a
+  # build, because an object that compiles says nothing about whether it loads.
+  # It is also the only coverage `truetop/build.rs`'s toolchain override has.
+  packaging:
+    runs-on: ubuntu-latest
+    env:
+      TRUETOP_EBPF_TOOLCHAIN: stable
+      RUSTC_BOOTSTRAP: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-src
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: bpf-linker@${{ env.BPF_LINKER_VERSION }}
+
+      - run: cargo xtask test
+
   cross-check:
     strategy:
       fail-fast: false
@@ -129,6 +154,7 @@ jobs:
       - deny
       - build-test
       - run-integration-test
+      - packaging
       - cross-check
     runs-on: ubuntu-latest
     steps:
