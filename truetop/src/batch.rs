@@ -53,7 +53,9 @@ struct ElemAttr {
     flags: u64,
 }
 
-/// Reusable scratch, so draining the maps costs no allocation per tick.
+/// Scratch buffers reused across batches and across ticks, sized once from the
+/// batch size and the CPU count. The summed map [`Self::sum_per_cpu`] returns is
+/// allocated per call.
 pub struct BatchReader {
     nr_cpus: usize,
     keys: Box<[u32]>,
